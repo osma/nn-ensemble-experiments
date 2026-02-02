@@ -125,13 +125,8 @@ def main():
         eps=1e-8,
     )
 
-    # Per-label positive weighting to handle imbalance
-    with torch.no_grad():
-        pos_counts = Y_train.sum(dim=0)
-        neg_counts = Y_train.shape[0] - pos_counts
-        pos_weight = (neg_counts / (pos_counts + 1e-8)).clamp(max=100.0)
-
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    # Unweighted BCE performs best for NDCG in this setup
+    criterion = nn.BCEWithLogitsLoss()
 
     print("Starting training...")
 
