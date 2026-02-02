@@ -41,7 +41,8 @@ class MeanWeightedConv1D(nn.Module):
 
 
 def csr_to_dense_tensor(csr):
-    return torch.from_numpy(csr.toarray()).float()
+    x = torch.from_numpy(csr.toarray()).float()
+    return torch.sqrt(torch.clamp(x, min=0.0))
 
 
 def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
