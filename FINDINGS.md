@@ -103,6 +103,27 @@ Conclusion:
 > Sub-linear input scaling is one of the highest-impact changes explored so far, and  
 > `log1p(x)` currently appears to be the best calibration choice.
 
+#### Negative result: learned global power scaling
+An experiment was run where the sub-linear power exponent `α` was made **learnable** and trained jointly with the ensemble using `BCEWithLogitsLoss`.
+
+Observed outcome:
+- Training loss behaved normally
+- **Test NDCG degraded**, reverting toward pre-scaling performance
+- The benefit of fixed `sqrt` / `log1p` scaling disappeared
+
+Interpretation:
+- BCE optimizes probability calibration, not ranking
+- When `α` is learnable, the optimizer pushes it back toward `α ≈ 1`
+- This effectively **undoes the beneficial compression** needed for good NDCG
+
+Key lesson:
+> Calibration transforms that improve ranking must be **fixed or externally tuned**.  
+> Learning them directly with BCE causes the optimizer to remove their ranking benefit.
+
+As a result:
+- Fixed transforms (`sqrt`, `log1p`, fixed power laws) are preferred
+- Learned calibration parameters coupled to BCE are avoided
+
 ---
 
 ## ❌ What has not worked (and was reverted)
