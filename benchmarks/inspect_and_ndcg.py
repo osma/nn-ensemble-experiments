@@ -74,10 +74,18 @@ def update_markdown_scoreboard(
 
     if path.exists():
         for line in path.read_text().splitlines():
-            if line.startswith("|") and "Model" not in line:
-                cols = [c.strip() for c in line.strip("|").split("|")]
-                if len(cols) == 4:
-                    rows[(cols[0], cols[1])] = cols
+            if not line.startswith("|"):
+                continue
+
+            cols = [c.strip() for c in line.strip("|").split("|")]
+            if len(cols) != 4:
+                continue
+
+            # Skip header and separator rows
+            if cols[0] == "Model" or all(set(c) <= {"-"} for c in cols):
+                continue
+
+            rows[(cols[0], cols[1])] = cols
 
     rows[(model, dataset)] = [
         model,
