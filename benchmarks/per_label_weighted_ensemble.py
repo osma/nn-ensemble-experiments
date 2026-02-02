@@ -121,12 +121,17 @@ def main():
     optimizer = optim.AdamW(
         model.parameters(),
         lr=LR,
-        weight_decay=0.01,
+        weight_decay=0.001,
         eps=1e-8,
     )
 
-    # Best-performing baseline loss for this model
-    criterion = nn.BCEWithLogitsLoss()
+    # Per-label positive weighting to handle imbalance
+    with torch.no_grad():
+        pos_counts = Y_train.sum(dim=0)
+        neg_counts = Y_train.shape[0] - pos_counts
+        pos_weight = (neg_counts / (pos_counts + 1e-8)).clamp(max=100.0)
+
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     print("Starting training...")
 
@@ -134,6 +139,10 @@ def main():
     train_loader = torch.utils.data.DataLoader(
         train_ds, batch_size=BATCH_SIZE, shuffle=True
     )
+
+    best_test_ndcg10 = -float("inf")
+    patience = 2
+    bad_epochs = 0
 
     for epoch in range(1, EPOCHS + 1):
         model.train()
@@ -182,6 +191,19 @@ def main():
             metrics=test_metrics,
             n_samples=n_used_test,
         )
+
+        current_ndcg10 = test_metrics["ndcg@10"]
+        if current_ndcg10 > best_test_ndcg10:
+            best_test_ndcg10 = current_ndcg10
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
+            if bad_epochs >= patience:
+                print(
+                    f"Early stopping at epoch {epoch:02d} "
+                    f"(best test ndcg@10 = {best_test_ndcg10:.6f})"
+                )
+                break
 
         print(
             f"Epoch {epoch:02d} | "
