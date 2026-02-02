@@ -19,6 +19,10 @@ class PerLabelWeightedEnsemble(nn.Module):
     For each label l:
         score[l] = sum_m w[m, l] * x[m, l] + b[l]
 
+    Notes:
+    - Applies a learned, global sub-linear power transform to inputs.
+    - The power parameter is shared across all models and labels.
+
     Input:
         x: (batch, M, L)
             M = number of base models
@@ -36,6 +40,10 @@ class PerLabelWeightedEnsemble(nn.Module):
         super().__init__()
         self.n_models = n_models
         self.n_labels = n_labels
+
+        # Learned global power parameter (0 < alpha < 1)
+        # Initialized so that alpha ≈ 0.5
+        self.log_alpha = nn.Parameter(torch.tensor(0.0))
 
         # Per-model, per-label weights
         self.weights = nn.Parameter(
@@ -60,7 +68,11 @@ class PerLabelWeightedEnsemble(nn.Module):
                 f"n_labels={self.n_labels}, got {x.shape}"
             )
 
-        weighted = x * self.weights.unsqueeze(0)
+        # Apply learned global sub-linear scaling
+        alpha = torch.sigmoid(self.log_alpha)
+        x_scaled = torch.pow(x + 1e-8, alpha)
+
+        weighted = x_scaled * self.weights.unsqueeze(0)
         out = weighted.sum(dim=1) + self.bias
         return out
 
@@ -97,12 +109,7 @@ def main():
         load_csr("data/train-mllm.npz"),
     ]
 
-    # Per-model power scaling (sub-linear confidence shaping)
-    # Order: [bonsai, fasttext, mllm]
-    alphas = torch.tensor([0.4, 0.6, 0.3])
-
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
-    X_train = torch.pow(X_train + 1e-8, alphas.view(1, -1, 1))
 
     Y_train = csr_to_dense_tensor(y_train_true)
 
@@ -116,7 +123,6 @@ def main():
     ]
 
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
-    X_test = torch.pow(X_test + 1e-8, alphas.view(1, -1, 1))
 
     n_models = X_train.shape[1]
     n_labels = X_train.shape[2]
