@@ -1,9 +1,13 @@
 from pathlib import Path
+import sys
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
+
+# Allow running as a script: `uv run benchmarks/torch_mean_bias_ensemble.py`
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from benchmarks.ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
 
