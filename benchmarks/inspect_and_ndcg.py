@@ -105,7 +105,7 @@ def main():
         "nn": "data/test-nn.npz",
     }
 
-    scoreboard_path = Path("benchmarks/SCOREBOARD.md")
+    scoreboard_path = Path("SCOREBOARD.md")
 
     for model, path in models.items():
         y_pred = load_csr(path)

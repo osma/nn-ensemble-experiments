@@ -2,6 +2,10 @@
 
 Experiments for improving the Annif NN ensemble backend/algorithm.
 
+## Benchmarks
+
+See the current benchmark results in [SCOREBOARD.md](SCOREBOARD.md).
+
 ## Development setup
 
 This project uses **uv** for Python version and dependency management.
