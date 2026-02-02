@@ -56,34 +56,52 @@ Even without automatic early stopping:
 
 ---
 
-### 4. Sub-linear input scaling (sqrt) significantly improves results
-Applying a simple preprocessing step to **all ensemble inputs**:
+### 4. Sub-linear input scaling significantly improves results (sqrt → log1p)
+Applying a simple preprocessing step to **all ensemble inputs** had a **large positive impact** on both:
+- **Test NDCG@10**
+- **Test NDCG@1000**
 
+#### First improvement: `sqrt`
 ```
 x -> sqrt(x)
 ```
-
-had a **large positive impact** on both:
-- **Test NDCG@10**
-- **Test NDCG@1000**
 
 Key observations:
 - `sqrt` is monotonic, so per-model ranking is preserved
 - Large (overconfident) scores are compressed more than small ones
 - Over-dominance by any single base model is reduced
 
-What this tells us:
+This revealed that:
 - Base model outputs are **systematically over-confident**
 - The ensemble benefits more from **relative confidence** than absolute magnitude
 - Calibration and scale matter more than additional model complexity
 
+#### Further improvement: `log1p`
+Replacing `sqrt` with a slightly stronger sub-linear transform:
+
+```
+x -> log1p(x)
+```
+
+led to a **small but consistent additional improvement**:
+- Higher peak **Test NDCG@10**
+- Higher peak **Test NDCG@1000**
+- Same overfitting pattern (early peak at epoch 2–3)
+
+Interpretation:
+- Very large base-model scores were still too dominant under `sqrt`
+- `log1p` applies stronger damping to extreme values while remaining monotonic
+- This further reduces the impact of overconfident false positives, especially for NDCG@1000
+
 This also explains earlier results:
 - Sigmoid hurt (too much compression)
 - Raw logits helped
-- `sqrt` hits a **sweet spot** between the two
+- `sqrt` helped a lot
+- `log1p` is a **slightly better calibration point** for this data
 
 Conclusion:
-> A simple sub-linear rescaling of inputs can outperform more complex loss or model changes.
+> Sub-linear input scaling is one of the highest-impact changes explored so far, and  
+> `log1p(x)` currently appears to be the best calibration choice.
 
 ---
 
