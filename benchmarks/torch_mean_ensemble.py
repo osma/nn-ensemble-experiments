@@ -9,7 +9,8 @@ from .ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
 
 DEVICE = "cpu"
 EPOCHS = 10
-LR = 1e-2
+LR = 1e-3
+BATCH_SIZE = 32
 K_VALUES = (10, 1000)
 
 
@@ -70,19 +71,29 @@ def main():
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
 
     model = MeanWeightedConv1D().to(DEVICE)
-    optimizer = optim.Adam(model.parameters(), lr=LR)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=LR,
+        weight_decay=0.01,
+        eps=1e-8,
+    )
     criterion = nn.BCELoss()
 
     print("Starting training...")
 
+    train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
+    train_loader = torch.utils.data.DataLoader(
+        train_ds, batch_size=BATCH_SIZE, shuffle=True
+    )
+
     for epoch in range(1, EPOCHS + 1):
         model.train()
-        optimizer.zero_grad()
-
-        output_train = model(X_train)
-        loss = criterion(output_train, Y_train)
-        loss.backward()
-        optimizer.step()
+        for xb, yb in train_loader:
+            optimizer.zero_grad()
+            output_train = model(xb)
+            loss = criterion(output_train, yb)
+            loss.backward()
+            optimizer.step()
 
         model.eval()
 
