@@ -52,6 +52,58 @@ def ndcg_at_k(y_true: csr_matrix, y_pred: csr_matrix, k: int = K_DEFAULT):
     return float(np.mean(ndcgs)), len(ndcgs)
 
 
+def _parse_float(v: str) -> float:
+    try:
+        return float(v)
+    except ValueError:
+        return float("-inf")
+
+
+def _render_top10_table(
+    rows: list[dict[str, str]],
+    sort_key: str,
+    title: str,
+):
+    ranked = sorted(
+        rows,
+        key=lambda r: _parse_float(r[sort_key]),
+        reverse=True,
+    )[:10]
+
+    if sort_key == "test ndcg@10":
+        other = "test ndcg@1000"
+        header = "| Rank | Model | Test NDCG@10 | Test NDCG@1000 |\n"
+        sep = "|------|-------|--------------|----------------|\n"
+        line = (
+            "| {rank} | {model} | {v1:.6f} | {v2:.6f} |\n"
+        )
+    else:
+        other = "test ndcg@10"
+        header = "| Rank | Model | Test NDCG@1000 | Test NDCG@10 |\n"
+        sep = "|------|-------|----------------|--------------|\n"
+        line = (
+            "| {rank} | {model} | {v1:.6f} | {v2:.6f} |\n"
+        )
+
+    body = []
+    for i, r in enumerate(ranked, start=1):
+        body.append(
+            line.format(
+                rank=i,
+                model=r["model"],
+                v1=_parse_float(r[sort_key]),
+                v2=_parse_float(r[other]),
+            )
+        )
+
+    return [
+        f"\n## {title}\n\n",
+        header,
+        sep,
+        *body,
+    ]
+
+
 def update_markdown_scoreboard(
     path: Path,
     model: str,
@@ -104,10 +156,26 @@ def update_markdown_scoreboard(
 
     rows[model] = row
 
-    body = [
+    ordered_rows = sorted(rows.values(), key=lambda x: x["model"])
+
+    main_table = [
         f"| {r['model']} | {r['train ndcg@10']} | {r['train ndcg@1000']} | "
         f"{r['test ndcg@10']} | {r['test ndcg@1000']} |\n"
-        for r in sorted(rows.values(), key=lambda x: x["model"])
+        for r in ordered_rows
     ]
 
-    path.write_text("".join(header + body))
+    top10_ndcg10 = _render_top10_table(
+        ordered_rows,
+        sort_key="test ndcg@10",
+        title="Top 10 Models by Test NDCG@10",
+    )
+
+    top10_ndcg1000 = _render_top10_table(
+        ordered_rows,
+        sort_key="test ndcg@1000",
+        title="Top 10 Models by Test NDCG@1000",
+    )
+
+    path.write_text(
+        "".join(header + main_table + top10_ndcg10 + top10_ndcg1000)
+    )
