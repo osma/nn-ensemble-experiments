@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from benchmarks.ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
+from .ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
 
 K = 1000
 
