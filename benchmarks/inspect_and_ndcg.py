@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.sparse import csr_matrix
+from pathlib import Path
 
 K = 1000
 
@@ -55,6 +56,44 @@ def ndcg_at_k(y_true: csr_matrix, y_pred: csr_matrix, k: int = K):
     return float(np.mean(ndcgs)), len(ndcgs)
 
 
+def update_markdown_scoreboard(
+    path: Path,
+    model: str,
+    dataset: str,
+    ndcg: float,
+    n_samples: int,
+):
+    header = [
+        "# Benchmark Scoreboard\n\n",
+        "## NDCG@1000\n\n",
+        "| Model | Dataset | NDCG@1000 | Samples |\n",
+        "|-------|---------|-----------|---------|\n",
+    ]
+
+    rows = {}
+
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if line.startswith("|") and "Model" not in line:
+                cols = [c.strip() for c in line.strip("|").split("|")]
+                if len(cols) == 4:
+                    rows[(cols[0], cols[1])] = cols
+
+    rows[(model, dataset)] = [
+        model,
+        dataset,
+        f"{ndcg:.6f}",
+        str(n_samples),
+    ]
+
+    body = [
+        f"| {v[0]} | {v[1]} | {v[2]} | {v[3]} |\n"
+        for v in sorted(rows.values(), key=lambda x: (x[0], x[1]))
+    ]
+
+    path.write_text("".join(header + body))
+
+
 def main():
     y_pred = load_csr("data/test-mllm.npz")
     y_true = load_csr("data/test-output.npz")
@@ -64,6 +103,17 @@ def main():
 
     ndcg, n_used = ndcg_at_k(y_true, y_pred, k=K)
     print(f"\nNDCG@{K} = {ndcg:.6f} (computed over {n_used} samples)")
+
+    scoreboard_path = Path("benchmarks/SCOREBOARD.md")
+    update_markdown_scoreboard(
+        path=scoreboard_path,
+        model="mllm",
+        dataset="test",
+        ndcg=ndcg,
+        n_samples=n_used,
+    )
+
+    print(f"Saved results to {scoreboard_path}")
 
 
 if __name__ == "__main__":
