@@ -1,0 +1,17 @@
+[project]
+name = "nn-ensemble-experiments"
+version = "0.1.0"
+description = "Experiments for improving the Annif NN ensemble backend/algorithm"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+    "ruff",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
