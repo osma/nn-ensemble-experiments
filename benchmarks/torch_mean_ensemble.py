@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
-from .ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
+from benchmarks.ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
 
 DEVICE = "cpu"
 EPOCHS = 10
