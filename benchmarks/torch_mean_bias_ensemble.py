@@ -19,7 +19,7 @@ class MeanWeightedConv1D(nn.Module):
     Output: (batch, L)
     """
 
-    def __init__(self):
+    def __init__(self, n_labels: int):
         super().__init__()
         self.conv = nn.Conv1d(
             in_channels=3,
@@ -27,11 +27,13 @@ class MeanWeightedConv1D(nn.Module):
             kernel_size=1,
             bias=False,
         )
+        self.bias = nn.Parameter(torch.zeros(n_labels))
         with torch.no_grad():
             self.conv.weight.fill_(1.0 / 3.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.conv(x).squeeze(1)
+        out = out + self.bias
         return torch.clamp(out, min=0.0, max=1.0)
 
 
@@ -69,7 +71,8 @@ def main():
 
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
 
-    model = MeanWeightedConv1D().to(DEVICE)
+    n_labels = X_train.shape[2]
+    model = MeanWeightedConv1D(n_labels).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
     criterion = nn.BCELoss()
 
@@ -86,7 +89,7 @@ def main():
 
         model.eval()
 
-        model_name = f"torch_mean_epoch{epoch:02d}"
+        model_name = f"torch_mean_bias_epoch{epoch:02d}"
 
         # --- Train evaluation ---
         y_train_pred_csr = tensor_to_csr(output_train)
