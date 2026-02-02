@@ -4,6 +4,7 @@ import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from scipy.sparse import csr_matrix
 
 # Allow running as a script: `uv run benchmarks/per_label_weighted_ensemble.py`
@@ -124,7 +125,25 @@ def main():
         weight_decay=0.01,
         eps=1e-8,
     )
-    criterion = nn.BCEWithLogitsLoss()
+
+    def pairwise_ranking_loss(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Pairwise ranking loss.
+        For each sample, compare one positive vs one negative label.
+        """
+        losses = []
+        for i in range(logits.size(0)):
+            pos = targets[i].bool()
+            neg = ~pos
+            if pos.sum() == 0 or neg.sum() == 0:
+                continue
+            pos_idx = pos.nonzero(as_tuple=False)[0]
+            neg_idx = neg.nonzero(as_tuple=False)[0]
+            diff = logits[i, pos_idx] - logits[i, neg_idx]
+            losses.append(F.soft_margin_loss(diff, torch.ones_like(diff)))
+        if not losses:
+            return torch.tensor(0.0, device=logits.device)
+        return torch.stack(losses).mean()
 
     print("Starting training...")
 
@@ -138,7 +157,7 @@ def main():
         for xb, yb in train_loader:
             optimizer.zero_grad()
             logits = model(xb)
-            loss = criterion(logits, yb)
+            loss = pairwise_ranking_loss(logits, yb)
             loss.backward()
             optimizer.step()
 
