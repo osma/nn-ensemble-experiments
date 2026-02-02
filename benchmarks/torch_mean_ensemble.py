@@ -42,7 +42,7 @@ class MeanWeightedConv1D(nn.Module):
 
 def csr_to_dense_tensor(csr):
     x = torch.from_numpy(csr.toarray()).float()
-    return torch.log1p(torch.clamp(x, min=0.0))
+    return torch.clamp(x, min=0.0)
 
 
 def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
@@ -61,7 +61,11 @@ def main():
         load_csr("data/train-mllm.npz"),
     ]
 
+    alphas = torch.tensor([0.4, 0.6, 0.3])
+
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
+    X_train = torch.pow(X_train + 1e-8, alphas.view(1, -1, 1))
+
     Y_train = csr_to_dense_tensor(y_train_true)
 
     print("Loading test data...")
@@ -74,6 +78,7 @@ def main():
     ]
 
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
+    X_test = torch.pow(X_test + 1e-8, alphas.view(1, -1, 1))
 
     model = MeanWeightedConv1D().to(DEVICE)
     optimizer = optim.AdamW(
