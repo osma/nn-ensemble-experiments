@@ -8,7 +8,7 @@ from scipy.sparse import csr_matrix
 from .ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
 
 DEVICE = "cpu"
-EPOCHS = 10
+EPOCHS = 50
 LR = 1e-2
 K_VALUES = (10, 1000)
 
