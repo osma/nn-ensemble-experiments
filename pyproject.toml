@@ -5,6 +5,7 @@ description = "Experiments for improving the Annif NN ensemble backend/algorithm
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "markupsafe==2.1.5",
     "numpy",
     "scipy",
     "torch",
@@ -12,15 +13,9 @@ dependencies = [
 
 
 [[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-default = true
-
-[[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 packages = ["torch"]
-
 
 [dependency-groups]
 dev = [
