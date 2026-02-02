@@ -4,7 +4,6 @@ import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from scipy.sparse import csr_matrix
 
 # Allow running as a script: `uv run benchmarks/per_label_weighted_ensemble.py`
@@ -126,51 +125,8 @@ def main():
         eps=1e-8,
     )
 
-    def pairwise_ranking_loss(
-        logits: torch.Tensor,
-        targets: torch.Tensor,
-        n_negatives: int = 10,
-    ) -> torch.Tensor:
-        """
-        Improved pairwise ranking loss with hard-negative mining.
-
-        For each sample:
-        - Use all positive labels
-        - Compare them against the top-k highest-scoring negative labels
-        This aligns much better with NDCG@k.
-        """
-        batch_losses = []
-
-        for i in range(logits.size(0)):
-            scores = logits[i]
-            y = targets[i].bool()
-
-            pos_idx = y.nonzero(as_tuple=False).squeeze(1)
-            neg_idx = (~y).nonzero(as_tuple=False).squeeze(1)
-
-            if pos_idx.numel() == 0 or neg_idx.numel() == 0:
-                continue
-
-            # Hard negative mining: take top-k scoring negatives
-            neg_scores = scores[neg_idx]
-            k = min(n_negatives, neg_scores.numel())
-            topk_neg_idx = neg_idx[torch.topk(neg_scores, k=k, largest=True).indices]
-
-            pos_scores = scores[pos_idx].unsqueeze(1)          # (P, 1)
-            neg_scores = scores[topk_neg_idx].unsqueeze(0)     # (1, K)
-
-            # Pairwise margin loss: want pos > neg
-            diff = pos_scores - neg_scores                     # (P, K)
-            loss = F.soft_margin_loss(
-                diff.reshape(-1),
-                torch.ones(diff.numel(), device=diff.device),
-            )
-            batch_losses.append(loss)
-
-        if not batch_losses:
-            return torch.tensor(0.0, device=logits.device)
-
-        return torch.stack(batch_losses).mean()
+    # Best-performing baseline loss for this model
+    criterion = nn.BCEWithLogitsLoss()
 
     print("Starting training...")
 
@@ -184,7 +140,7 @@ def main():
         for xb, yb in train_loader:
             optimizer.zero_grad()
             logits = model(xb)
-            loss = pairwise_ranking_loss(logits, yb)
+            loss = criterion(logits, yb)
             loss.backward()
             optimizer.step()
 
