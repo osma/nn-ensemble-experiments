@@ -147,7 +147,7 @@ def main():
 
         # --- Train evaluation ---
         with torch.no_grad():
-            train_scores = torch.sigmoid(model(X_train))
+            train_scores = model(X_train)
 
         y_train_pred_csr = tensor_to_csr(train_scores)
         train_metrics = {}
@@ -165,7 +165,7 @@ def main():
 
         # --- Test evaluation ---
         with torch.no_grad():
-            test_scores = torch.sigmoid(model(X_test))
+            test_scores = model(X_test)
 
         y_test_pred_csr = tensor_to_csr(test_scores)
         test_metrics = {}
