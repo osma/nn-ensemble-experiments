@@ -27,13 +27,14 @@ class MeanWeightedConv1D(nn.Module):
             kernel_size=1,
             bias=False,
         )
-        self.bias = nn.Parameter(torch.zeros(n_labels))
+        self.bias = nn.Parameter(torch.zeros(1, n_labels))
         with torch.no_grad():
             self.conv.weight.fill_(1.0 / 3.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.conv(x).squeeze(1)
-        out = out + self.bias
+        mean = self.conv(x).squeeze(1)
+        delta = self.bias
+        out = mean + delta
         return torch.clamp(out, min=0.0, max=1.0)
 
 
