@@ -63,8 +63,8 @@ class PerLabelWeightedEnsemble(nn.Module):
                 f"n_labels={self.n_labels}, got {x.shape}"
             )
 
-        # Apply fixed sub-linear scaling (log1p)
-        x_scaled = torch.log1p(torch.clamp(x, min=0.0))
+        # Inputs are already log1p-scaled during preprocessing
+        x_scaled = x
 
         weighted = x_scaled * self.weights.unsqueeze(0)
         out = weighted.sum(dim=1) + self.bias
@@ -84,7 +84,7 @@ K_VALUES = (10, 1000)
 
 def csr_to_dense_tensor(csr):
     x = torch.from_numpy(csr.toarray()).float()
-    return torch.clamp(x, min=0.0)
+    return torch.log1p(torch.clamp(x, min=0.0))
 
 
 def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
