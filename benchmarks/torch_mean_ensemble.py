@@ -47,15 +47,26 @@ def main():
 
     print("Loading training data...")
 
-    y_true = load_csr("data/train-output.npz")
-    preds = [
+    y_train_true = load_csr("data/train-output.npz")
+    train_preds = [
         load_csr("data/train-bonsai.npz"),
         load_csr("data/train-fasttext.npz"),
         load_csr("data/train-mllm.npz"),
     ]
 
-    X = torch.stack([csr_to_dense_tensor(p) for p in preds], dim=1)
-    Y = csr_to_dense_tensor(y_true)
+    X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
+    Y_train = csr_to_dense_tensor(y_train_true)
+
+    print("Loading test data...")
+
+    y_test_true = load_csr("data/test-output.npz")
+    test_preds = [
+        load_csr("data/test-bonsai.npz"),
+        load_csr("data/test-fasttext.npz"),
+        load_csr("data/test-mllm.npz"),
+    ]
+
+    X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
 
     model = MeanWeightedConv1D().to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
@@ -67,27 +78,46 @@ def main():
         model.train()
         optimizer.zero_grad()
 
-        output = model(X)
-        loss = criterion(output, Y)
+        output_train = model(X_train)
+        loss = criterion(output_train, Y_train)
         loss.backward()
         optimizer.step()
 
         model.eval()
-        y_pred_csr = tensor_to_csr(output)
-
-        metrics = {}
-        for k in K_VALUES:
-            ndcg, n_used = ndcg_at_k(y_true, y_pred_csr, k=k)
-            metrics[f"ndcg@{k}"] = ndcg
 
         model_name = f"torch_mean_epoch_{epoch}"
+
+        # --- Train evaluation ---
+        y_train_pred_csr = tensor_to_csr(output_train)
+        train_metrics = {}
+        for k in K_VALUES:
+            ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
+            train_metrics[f"ndcg@{k}"] = ndcg
 
         update_markdown_scoreboard(
             path=scoreboard_path,
             model=model_name,
             dataset="train",
-            metrics=metrics,
-            n_samples=n_used,
+            metrics=train_metrics,
+            n_samples=n_used_train,
+        )
+
+        # --- Test evaluation ---
+        with torch.no_grad():
+            output_test = model(X_test)
+
+        y_test_pred_csr = tensor_to_csr(output_test)
+        test_metrics = {}
+        for k in K_VALUES:
+            ndcg, n_used_test = ndcg_at_k(y_test_true, y_test_pred_csr, k=k)
+            test_metrics[f"ndcg@{k}"] = ndcg
+
+        update_markdown_scoreboard(
+            path=scoreboard_path,
+            model=model_name,
+            dataset="test",
+            metrics=test_metrics,
+            n_samples=n_used_test,
         )
 
         weights = model.conv.weight.detach().cpu().numpy().reshape(-1)
