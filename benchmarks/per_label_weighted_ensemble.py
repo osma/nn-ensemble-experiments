@@ -140,9 +140,7 @@ def main():
         train_ds, batch_size=BATCH_SIZE, shuffle=True
     )
 
-    best_test_ndcg10 = -float("inf")
-    patience = 2
-    bad_epochs = 0
+    # Early stopping disabled for now
 
     for epoch in range(1, EPOCHS + 1):
         model.train()
@@ -192,18 +190,7 @@ def main():
             n_samples=n_used_test,
         )
 
-        current_ndcg10 = test_metrics["ndcg@10"]
-        if current_ndcg10 > best_test_ndcg10:
-            best_test_ndcg10 = current_ndcg10
-            bad_epochs = 0
-        else:
-            bad_epochs += 1
-            if bad_epochs >= patience:
-                print(
-                    f"Early stopping at epoch {epoch:02d} "
-                    f"(best test ndcg@10 = {best_test_ndcg10:.6f})"
-                )
-                break
+        # Early stopping disabled
 
         print(
             f"Epoch {epoch:02d} | "
