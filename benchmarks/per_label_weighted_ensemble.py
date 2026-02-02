@@ -20,8 +20,7 @@ class PerLabelWeightedEnsemble(nn.Module):
         score[l] = sum_m w[m, l] * x[m, l] + b[l]
 
     Notes:
-    - Applies a learned, global sub-linear power transform to inputs.
-    - The power parameter is shared across all models and labels.
+    - Applies a fixed sub-linear log1p transform to inputs.
 
     Input:
         x: (batch, M, L)
@@ -40,10 +39,6 @@ class PerLabelWeightedEnsemble(nn.Module):
         super().__init__()
         self.n_models = n_models
         self.n_labels = n_labels
-
-        # Learned global power parameter (0 < alpha < 1)
-        # Initialized so that alpha ≈ 0.5
-        self.log_alpha = nn.Parameter(torch.tensor(0.0))
 
         # Per-model, per-label weights
         self.weights = nn.Parameter(
@@ -68,9 +63,8 @@ class PerLabelWeightedEnsemble(nn.Module):
                 f"n_labels={self.n_labels}, got {x.shape}"
             )
 
-        # Apply learned global sub-linear scaling
-        alpha = torch.sigmoid(self.log_alpha)
-        x_scaled = torch.pow(x + 1e-8, alpha)
+        # Apply fixed sub-linear scaling (log1p)
+        x_scaled = torch.log1p(torch.clamp(x, min=0.0))
 
         weighted = x_scaled * self.weights.unsqueeze(0)
         out = weighted.sum(dim=1) + self.bias
