@@ -61,11 +61,11 @@ def update_markdown_scoreboard(
 ):
     header = [
         "# Benchmark Scoreboard\n\n",
-        "| Model | Dataset | NDCG@10 | NDCG@1000 | Samples |\n",
-        "|-------|---------|---------|-----------|---------|\n",
+        "| Model | Train NDCG@10 | Train NDCG@1000 | Test NDCG@10 | Test NDCG@1000 |\n",
+        "|-------|---------------|----------------|-------------|----------------|\n",
     ]
 
-    rows: dict[tuple[str, str], dict[str, str]] = {}
+    rows: dict[str, dict[str, str]] = {}
 
     if path.exists():
         for line in path.read_text().splitlines():
@@ -79,35 +79,35 @@ def update_markdown_scoreboard(
             if cols[0] == "Model" or all(set(c) <= {"-"} for c in cols):
                 continue
 
-            rows[(cols[0], cols[1])] = {
+            rows[cols[0]] = {
                 "model": cols[0],
-                "dataset": cols[1],
-                "ndcg@10": cols[2],
-                "ndcg@1000": cols[3],
-                "samples": cols[4],
+                "train ndcg@10": cols[1],
+                "train ndcg@1000": cols[2],
+                "test ndcg@10": cols[3],
+                "test ndcg@1000": cols[4],
             }
 
-    key = (model, dataset)
     row = rows.get(
-        key,
+        model,
         {
             "model": model,
-            "dataset": dataset,
-            "ndcg@10": "",
-            "ndcg@1000": "",
-            "samples": str(n_samples),
+            "train ndcg@10": "",
+            "train ndcg@1000": "",
+            "test ndcg@10": "",
+            "test ndcg@1000": "",
         },
     )
 
+    prefix = "train" if dataset == "train" else "test"
     for k, v in metrics.items():
-        row[k] = f"{v:.6f}"
+        row[f"{prefix} {k}"] = f"{v:.6f}"
 
-    row["samples"] = str(n_samples)
-    rows[key] = row
+    rows[model] = row
 
     body = [
-        f"| {r['model']} | {r['dataset']} | {r['ndcg@10']} | {r['ndcg@1000']} | {r['samples']} |\n"
-        for r in sorted(rows.values(), key=lambda x: (x["model"], x["dataset"]))
+        f"| {r['model']} | {r['train ndcg@10']} | {r['train ndcg@1000']} | "
+        f"{r['test ndcg@10']} | {r['test ndcg@1000']} |\n"
+        for r in sorted(rows.values(), key=lambda x: x["model"])
     ]
 
     path.write_text("".join(header + body))
