@@ -56,6 +56,37 @@ Even without automatic early stopping:
 
 ---
 
+### 4. Sub-linear input scaling (sqrt) significantly improves results
+Applying a simple preprocessing step to **all ensemble inputs**:
+
+```
+x -> sqrt(x)
+```
+
+had a **large positive impact** on both:
+- **Test NDCG@10**
+- **Test NDCG@1000**
+
+Key observations:
+- `sqrt` is monotonic, so per-model ranking is preserved
+- Large (overconfident) scores are compressed more than small ones
+- Over-dominance by any single base model is reduced
+
+What this tells us:
+- Base model outputs are **systematically over-confident**
+- The ensemble benefits more from **relative confidence** than absolute magnitude
+- Calibration and scale matter more than additional model complexity
+
+This also explains earlier results:
+- Sigmoid hurt (too much compression)
+- Raw logits helped
+- `sqrt` hits a **sweet spot** between the two
+
+Conclusion:
+> A simple sub-linear rescaling of inputs can outperform more complex loss or model changes.
+
+---
+
 ## ❌ What has not worked (and was reverted)
 
 ### 1. Pairwise / ranking-based losses
