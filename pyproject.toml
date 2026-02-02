@@ -10,9 +10,6 @@ dependencies = [
     "torch",
 ]
 
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-markupsafe = { index = "pypi" }
 
 [[tool.uv.index]]
 name = "pypi"
