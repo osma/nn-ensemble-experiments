@@ -40,14 +40,17 @@ def main():
             print(f"\nModel: {model}")
             print("Predictions shape:", y_pred.shape)
 
-            ndcg, n_used = ndcg_at_k(y_true, y_pred, k=K)
-            print(f"NDCG@{K} = {ndcg:.6f} (computed over {n_used} samples)")
+            metrics = {}
+            for k in (10, 1000):
+                ndcg, n_used = ndcg_at_k(y_true, y_pred, k=k)
+                print(f"NDCG@{k} = {ndcg:.6f} (computed over {n_used} samples)")
+                metrics[f"ndcg@{k}"] = ndcg
 
             update_markdown_scoreboard(
                 path=scoreboard_path,
                 model=model,
                 dataset=split,
-                ndcg=ndcg,
+                metrics=metrics,
                 n_samples=n_used,
             )
 

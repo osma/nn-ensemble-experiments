@@ -56,17 +56,16 @@ def update_markdown_scoreboard(
     path: Path,
     model: str,
     dataset: str,
-    ndcg: float,
+    metrics: dict[str, float],
     n_samples: int,
 ):
     header = [
         "# Benchmark Scoreboard\n\n",
-        "## NDCG@1000\n\n",
-        "| Model | Dataset | NDCG@1000 | Samples |\n",
-        "|-------|---------|-----------|---------|\n",
+        "| Model | Dataset | NDCG@10 | NDCG@1000 | Samples |\n",
+        "|-------|---------|---------|-----------|---------|\n",
     ]
 
-    rows: dict[tuple[str, str], list[str]] = {}
+    rows: dict[tuple[str, str], dict[str, str]] = {}
 
     if path.exists():
         for line in path.read_text().splitlines():
@@ -74,24 +73,41 @@ def update_markdown_scoreboard(
                 continue
 
             cols = [c.strip() for c in line.strip("|").split("|")]
-            if len(cols) != 4:
+            if len(cols) != 5:
                 continue
 
             if cols[0] == "Model" or all(set(c) <= {"-"} for c in cols):
                 continue
 
-            rows[(cols[0], cols[1])] = cols
+            rows[(cols[0], cols[1])] = {
+                "model": cols[0],
+                "dataset": cols[1],
+                "ndcg@10": cols[2],
+                "ndcg@1000": cols[3],
+                "samples": cols[4],
+            }
 
-    rows[(model, dataset)] = [
-        model,
-        dataset,
-        f"{ndcg:.6f}",
-        str(n_samples),
-    ]
+    key = (model, dataset)
+    row = rows.get(
+        key,
+        {
+            "model": model,
+            "dataset": dataset,
+            "ndcg@10": "",
+            "ndcg@1000": "",
+            "samples": str(n_samples),
+        },
+    )
+
+    for k, v in metrics.items():
+        row[k] = f"{v:.6f}"
+
+    row["samples"] = str(n_samples)
+    rows[key] = row
 
     body = [
-        f"| {v[0]} | {v[1]} | {v[2]} | {v[3]} |\n"
-        for v in sorted(rows.values(), key=lambda x: (x[0], x[1]))
+        f"| {r['model']} | {r['dataset']} | {r['ndcg@10']} | {r['ndcg@1000']} | {r['samples']} |\n"
+        for r in sorted(rows.values(), key=lambda x: (x["model"], x["dataset"]))
     ]
 
     path.write_text("".join(header + body))

@@ -55,14 +55,17 @@ def main():
 
         y_mean = mean_ensemble(preds)
 
-        ndcg, n_used = ndcg_at_k(y_true, y_mean, k=K)
-        print(f"NDCG@{K} = {ndcg:.6f} (computed over {n_used} samples)")
+        metrics = {}
+        for k in (10, 1000):
+            ndcg, n_used = ndcg_at_k(y_true, y_mean, k=k)
+            print(f"NDCG@{k} = {ndcg:.6f} (computed over {n_used} samples)")
+            metrics[f"ndcg@{k}"] = ndcg
 
         update_markdown_scoreboard(
             path=scoreboard_path,
             model="mean",
             dataset=split,
-            ndcg=ndcg,
+            metrics=metrics,
             n_samples=n_used,
         )
 
