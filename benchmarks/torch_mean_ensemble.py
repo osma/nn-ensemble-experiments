@@ -8,7 +8,7 @@ from scipy.sparse import csr_matrix
 from .ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
 
 DEVICE = "cpu"
-EPOCHS = 20
+EPOCHS = 10
 LR = 1e-2
 K_VALUES = (10, 1000)
 
@@ -31,7 +31,8 @@ class MeanWeightedConv1D(nn.Module):
             self.conv.weight.fill_(1.0 / 3.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.conv(x).squeeze(1)
+        out = self.conv(x).squeeze(1)
+        return torch.clamp(out, min=0.0, max=1.0)
 
 
 def csr_to_dense_tensor(csr):
@@ -70,7 +71,7 @@ def main():
 
     model = MeanWeightedConv1D().to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
-    criterion = nn.MSELoss()
+    criterion = nn.BCELoss()
 
     print("Starting training...")
 
@@ -85,7 +86,7 @@ def main():
 
         model.eval()
 
-        model_name = f"torch_mean_epoch_{epoch}"
+        model_name = f"torch_mean_epoch{epoch:02d}"
 
         # --- Train evaluation ---
         y_train_pred_csr = tensor_to_csr(output_train)
