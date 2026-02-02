@@ -103,6 +103,26 @@ Conclusion:
 > Sub-linear input scaling is one of the highest-impact changes explored so far, and  
 > `log1p(x)` currently appears to be the best calibration choice.
 
+#### Important detail: where the transform is applied matters
+A subtle but critical finding is that **`log1p` must be applied during preprocessing**, not inside the model’s `forward()` method.
+
+Observed behavior:
+- Applying `log1p` **before training** (as a fixed preprocessing step) yields strong NDCG gains.
+- Applying the same `log1p` **inside the model forward pass** results in worse test NDCG, even though training loss is similar.
+
+Interpretation:
+- When the transform lives inside the model, gradients flow through it.
+- BCE then adapts weights and biases to partially *undo* the beneficial compression.
+- This mirrors the failure mode seen with learned power scaling.
+
+Key lesson:
+> Calibration transforms that help ranking must be **fixed and external to the model**.  
+> Even a fixed transform loses effectiveness if it is optimized through BCE gradients.
+
+As a result:
+- `log1p` is treated as **input preprocessing**, not a model component.
+- The model operates on already-calibrated inputs and cannot learn around the transform.
+
 #### Negative result: learned global power scaling
 An experiment was run where the sub-linear power exponent `α` was made **learnable** and trained jointly with the ensemble using `BCEWithLogitsLoss`.
 
