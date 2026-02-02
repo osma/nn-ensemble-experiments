@@ -28,43 +28,43 @@
 | torch_mean_epoch08 | 0.717924 | 0.821980 | 0.681514 | 0.796219 |
 | torch_mean_epoch09 | 0.717926 | 0.822016 | 0.681525 | 0.796220 |
 | torch_mean_epoch10 | 0.717918 | 0.821978 | 0.681803 | 0.796406 |
-| torch_per_label_epoch01 | 0.747946 | 0.841405 | 0.704097 | 0.811594 |
-| torch_per_label_epoch02 | 0.757473 | 0.847844 | 0.712814 | 0.818374 |
-| torch_per_label_epoch03 | 0.744137 | 0.838353 | 0.695176 | 0.807411 |
-| torch_per_label_epoch04 | 0.701079 | 0.781975 | 0.648346 | 0.743349 |
-| torch_per_label_epoch05 | 0.662153 | 0.722034 | 0.606737 | 0.675765 |
-| torch_per_label_epoch06 | 0.628624 | 0.676296 | 0.571156 | 0.627349 |
-| torch_per_label_epoch07 | 0.602650 | 0.641439 | 0.540049 | 0.588338 |
-| torch_per_label_epoch08 | 0.584217 | 0.616054 | 0.516972 | 0.559928 |
-| torch_per_label_epoch09 | 0.570552 | 0.597976 | 0.500467 | 0.536676 |
-| torch_per_label_epoch10 | 0.560808 | 0.585046 | 0.487685 | 0.520275 |
+| torch_per_label_epoch01 | 0.736178 | 0.835260 | 0.698002 | 0.807845 |
+| torch_per_label_epoch02 | 0.749718 | 0.844430 | 0.712126 | 0.817973 |
+| torch_per_label_epoch03 | 0.755291 | 0.847764 | 0.713601 | 0.819885 |
+| torch_per_label_epoch04 | 0.748535 | 0.840462 | 0.705595 | 0.810334 |
+| torch_per_label_epoch05 | 0.735043 | 0.820602 | 0.686545 | 0.787612 |
+| torch_per_label_epoch06 | 0.722997 | 0.799872 | 0.675650 | 0.765536 |
+| torch_per_label_epoch07 | 0.715120 | 0.786126 | 0.664167 | 0.750031 |
+| torch_per_label_epoch08 | 0.708367 | 0.775507 | 0.655506 | 0.736766 |
+| torch_per_label_epoch09 | 0.701365 | 0.766770 | 0.645516 | 0.724518 |
+| torch_per_label_epoch10 | 0.697812 | 0.759709 | 0.638477 | 0.714419 |
 
 ## Top 10 Models by Test NDCG@10
 
 | Rank | Model | Test NDCG@10 | Test NDCG@1000 |
 |------|-------|--------------|----------------|
-| 1 | torch_per_label_epoch02 | 0.712814 | 0.818374 |
-| 2 | torch_per_label_epoch01 | 0.704097 | 0.811594 |
-| 3 | torch_mean_bias_epoch05 | 0.696882 | 0.778904 |
-| 4 | torch_mean_bias_epoch08 | 0.696755 | 0.776086 |
-| 5 | torch_mean_bias_epoch07 | 0.696723 | 0.776562 |
-| 6 | torch_mean_bias_epoch04 | 0.696578 | 0.779068 |
-| 7 | torch_mean_bias_epoch06 | 0.696407 | 0.777719 |
-| 8 | torch_mean_bias_epoch09 | 0.695506 | 0.774993 |
-| 9 | torch_mean_bias_epoch03 | 0.695354 | 0.780471 |
-| 10 | torch_mean_bias_epoch10 | 0.695324 | 0.774319 |
+| 1 | torch_per_label_epoch03 | 0.713601 | 0.819885 |
+| 2 | torch_per_label_epoch02 | 0.712126 | 0.817973 |
+| 3 | torch_per_label_epoch04 | 0.705595 | 0.810334 |
+| 4 | torch_per_label_epoch01 | 0.698002 | 0.807845 |
+| 5 | torch_mean_bias_epoch05 | 0.696882 | 0.778904 |
+| 6 | torch_mean_bias_epoch08 | 0.696755 | 0.776086 |
+| 7 | torch_mean_bias_epoch07 | 0.696723 | 0.776562 |
+| 8 | torch_mean_bias_epoch04 | 0.696578 | 0.779068 |
+| 9 | torch_mean_bias_epoch06 | 0.696407 | 0.777719 |
+| 10 | torch_mean_bias_epoch09 | 0.695506 | 0.774993 |
 
 ## Top 10 Models by Test NDCG@1000
 
 | Rank | Model | Test NDCG@1000 | Test NDCG@10 |
 |------|-------|----------------|--------------|
-| 1 | torch_per_label_epoch02 | 0.818374 | 0.712814 |
-| 2 | torch_per_label_epoch01 | 0.811594 | 0.704097 |
-| 3 | torch_per_label_epoch03 | 0.807411 | 0.695176 |
-| 4 | torch_mean_epoch10 | 0.796406 | 0.681803 |
-| 5 | torch_mean_epoch09 | 0.796220 | 0.681525 |
-| 6 | torch_mean_epoch08 | 0.796219 | 0.681514 |
-| 7 | mean_weighted | 0.796209 | 0.678707 |
-| 8 | torch_mean_epoch07 | 0.796105 | 0.681228 |
-| 9 | torch_mean_epoch05 | 0.796080 | 0.680588 |
-| 10 | mean | 0.795979 | 0.679141 |
+| 1 | torch_per_label_epoch03 | 0.819885 | 0.713601 |
+| 2 | torch_per_label_epoch02 | 0.817973 | 0.712126 |
+| 3 | torch_per_label_epoch04 | 0.810334 | 0.705595 |
+| 4 | torch_per_label_epoch01 | 0.807845 | 0.698002 |
+| 5 | torch_mean_epoch10 | 0.796406 | 0.681803 |
+| 6 | torch_mean_epoch09 | 0.796220 | 0.681525 |
+| 7 | torch_mean_epoch08 | 0.796219 | 0.681514 |
+| 8 | mean_weighted | 0.796209 | 0.678707 |
+| 9 | torch_mean_epoch07 | 0.796105 | 0.681228 |
+| 10 | torch_mean_epoch05 | 0.796080 | 0.680588 |
