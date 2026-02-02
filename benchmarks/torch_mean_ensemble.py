@@ -104,7 +104,10 @@ def main():
         model_name = f"torch_mean_epoch{epoch:02d}"
 
         # --- Train evaluation ---
-        y_train_pred_csr = tensor_to_csr(output_train)
+        with torch.no_grad():
+            full_train_output = model(X_train)
+
+        y_train_pred_csr = tensor_to_csr(full_train_output)
         train_metrics = {}
         for k in K_VALUES:
             ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
