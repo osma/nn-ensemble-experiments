@@ -162,7 +162,49 @@ As a result:
 
 ## ❌ What has not worked (and was reverted)
 
-### 1. Pairwise / ranking-based losses
+### 1. Trainable cross-label interactions (low-rank label residuals)
+
+**Model:** `PerLabelWeightedConvResidualEnsemble`  
+**Mechanism:** Low-rank residual on logits  
+```
+logits = logits + (logits @ V) @ Uᵀ
+```
+
+Observed results:
+- **Catastrophic collapse of NDCG**
+  - Test NDCG@10 ≈ 0.09–0.12
+  - Test NDCG@1000 ≈ 0.22–0.28
+- Far worse than any base model or simple mean
+- Training loss remained small and stable
+
+Interpretation:
+- BCEWithLogitsLoss exploits the trainable cross-label path to optimize
+  probability calibration, not ranking
+- The residual destroys relative score geometry across labels
+- This is the same failure mode observed with:
+  - learned power scaling
+  - sigmoid before NDCG
+  - class imbalance weighting
+- Even very low-rank (≪ L²) label interactions are unsafe when trained jointly
+  with BCE on logits
+
+Key lesson:
+> **Any trainable cross-label interaction inside the BCE training loop is a dead end
+> for this architecture.**
+
+Implication:
+- Label correlations must already be captured implicitly by:
+  - base models
+  - per-label bias terms
+  - fixed sub-linear input calibration
+- If cross-label structure is added at all, it must be:
+  - inference-only, or
+  - strictly detached from BCE gradients, or
+  - limited to top-k post-processing
+
+---
+
+### 2. Pairwise / ranking-based losses
 Tried variants:
 - Naive pairwise loss
 - Hard-negative mining pairwise loss
