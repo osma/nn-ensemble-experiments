@@ -73,7 +73,7 @@ def main():
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
     Y_train = csr_to_dense_tensor(y_train_true)
 
-    from benchmarks.per_label_weighted_conv_ensemble import PerLabelWeightedConvEnsemble
+    from benchmarks.torch_per_label_conv import PerLabelWeightedConvEnsemble
 
     n_models = X_train.shape[1]
     n_labels = X_train.shape[2]

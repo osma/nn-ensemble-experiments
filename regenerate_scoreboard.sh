@@ -6,14 +6,19 @@ echo "Regenerating SCOREBOARD.md..."
 # Remove old scoreboard
 rm -f SCOREBOARD.md
 
-# Base benchmarks
-uv run python -m benchmarks.inspect_and_ndcg
-uv run python -m benchmarks.mean_ensemble
-uv run python -m benchmarks.weighted_mean_ensemble
+# Baselines
+uv run python -m benchmarks.baseline
 
-# Torch-based benchmarks
-uv run python -m benchmarks.torch_mean_ensemble
-uv run python -m benchmarks.torch_mean_bias_ensemble
-uv run python -m benchmarks.per_label_weighted_ensemble
+# Non-torch ensembles
+uv run python -m benchmarks.mean
+uv run python -m benchmarks.mean_weighted
+
+# Torch-based ensembles
+uv run python -m benchmarks.torch_mean
+uv run python -m benchmarks.torch_mean_bias
+uv run python -m benchmarks.torch_per_label
+uv run python -m benchmarks.torch_per_label_conv
+uv run python -m benchmarks.torch_per_label_conv_residual
+uv run python -m benchmarks.torch_per_label_conv_posthoc_residual
 
 echo "Done. SCOREBOARD.md regenerated."
