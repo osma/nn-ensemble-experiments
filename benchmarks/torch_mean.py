@@ -1,0 +1,179 @@
+from pathlib import Path
+import sys
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from scipy.sparse import csr_matrix
+
+# Allow running as a script: `uv run benchmarks/torch_mean_ensemble.py`
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
+
+DEVICE = "cpu"
+EPOCHS = 10
+LR = 1e-3
+BATCH_SIZE = 32
+K_VALUES = (10, 1000)
+
+PATIENCE = 2
+MIN_EPOCHS = 2
+
+
+class MeanWeightedConv1D(nn.Module):
+    """
+    Input:  (batch, 3, L)
+    Output: (batch, L)
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv1d(
+            in_channels=3,
+            out_channels=1,
+            kernel_size=1,
+            bias=False,
+        )
+        with torch.no_grad():
+            self.conv.weight.fill_(1.0 / 3.0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.conv(x).squeeze(1)
+        return torch.clamp(out, min=0.0, max=1.0)
+
+
+def csr_to_dense_tensor(csr):
+    x = torch.from_numpy(csr.toarray()).float()
+    return torch.clamp(x, min=0.0)
+
+
+def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
+    return csr_matrix(t.detach().cpu().numpy())
+
+
+def main():
+    scoreboard_path = Path("SCOREBOARD.md")
+
+    print("Loading training data...")
+
+    y_train_true = load_csr("data/train-output.npz")
+    train_preds = [
+        load_csr("data/train-bonsai.npz"),
+        load_csr("data/train-fasttext.npz"),
+        load_csr("data/train-mllm.npz"),
+    ]
+
+    X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
+    X_train = torch.log1p(X_train)
+
+    Y_train = csr_to_dense_tensor(y_train_true)
+
+    print("Loading test data...")
+
+    y_test_true = load_csr("data/test-output.npz")
+    test_preds = [
+        load_csr("data/test-bonsai.npz"),
+        load_csr("data/test-fasttext.npz"),
+        load_csr("data/test-mllm.npz"),
+    ]
+
+    X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
+    X_test = torch.log1p(X_test)
+
+    model = MeanWeightedConv1D().to(DEVICE)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=LR,
+        weight_decay=0.01,
+        eps=1e-8,
+    )
+    criterion = nn.BCELoss()
+
+    print("Starting training...")
+
+    train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
+    train_loader = torch.utils.data.DataLoader(
+        train_ds, batch_size=BATCH_SIZE, shuffle=True
+    )
+
+    best_metric = float("-inf")
+    best_state = None
+    best_train_metrics = None
+    best_test_metrics = None
+    best_n_used_train = None
+    best_n_used_test = None
+    epochs_no_improve = 0
+
+    for epoch in range(1, EPOCHS + 1):
+        model.train()
+        for xb, yb in train_loader:
+            optimizer.zero_grad()
+            output_train = model(xb)
+            loss = criterion(output_train, yb)
+            loss.backward()
+            optimizer.step()
+
+        model.eval()
+
+        # --- Train evaluation ---
+        with torch.no_grad():
+            full_train_output = model(X_train)
+
+        y_train_pred_csr = tensor_to_csr(full_train_output)
+        train_metrics = {}
+        for k in K_VALUES:
+            ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
+            train_metrics[f"ndcg@{k}"] = ndcg
+
+
+        # --- Test evaluation ---
+        with torch.no_grad():
+            output_test = model(X_test)
+
+        y_test_pred_csr = tensor_to_csr(output_test)
+        test_metrics = {}
+        for k in K_VALUES:
+            ndcg, n_used_test = ndcg_at_k(y_test_true, y_test_pred_csr, k=k)
+            test_metrics[f"ndcg@{k}"] = ndcg
+
+        f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
+        test_metrics["f1@5"] = f1
+
+        current = test_metrics["ndcg@10"]
+        if current > best_metric:
+            best_metric = current
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            best_train_metrics = train_metrics.copy()
+            best_test_metrics = test_metrics.copy()
+            best_n_used_train = n_used_train
+            best_n_used_test = n_used_test
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epoch >= MIN_EPOCHS and epochs_no_improve >= PATIENCE:
+            break
+
+    model.load_state_dict(best_state)
+
+    update_markdown_scoreboard(
+        path=scoreboard_path,
+        model="torch_mean",
+        dataset="train",
+        metrics=best_train_metrics,
+        n_samples=best_n_used_train,
+    )
+    update_markdown_scoreboard(
+        path=scoreboard_path,
+        model="torch_mean",
+        dataset="test",
+        metrics=best_test_metrics,
+        n_samples=best_n_used_test,
+    )
+
+    print("\nSaved best result to SCOREBOARD.md")
+
+
+if __name__ == "__main__":
+    main()
