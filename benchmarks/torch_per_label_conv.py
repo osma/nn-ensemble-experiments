@@ -47,9 +47,10 @@ class PerLabelWeightedConvEnsemble(nn.Module):
             bias=False,
         )
 
-        # Initialize to a mean (not sum); allow training
+        # Initialize to a mean (not sum) and freeze
         with torch.no_grad():
             self.sum_conv.weight.fill_(1.0 / n_models)
+        self.sum_conv.weight.requires_grad_(False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
