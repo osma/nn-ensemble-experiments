@@ -164,6 +164,8 @@ As a result:
 
 ### 1. Trainable cross-label interactions (low-rank label residuals)
 
+#### 1a. Jointly trained residuals (catastrophic failure)
+
 **Model:** `PerLabelWeightedConvResidualEnsemble`  
 **Mechanism:** Low-rank residual on logits  
 ```
@@ -178,7 +180,7 @@ Observed results:
 - Training loss remained small and stable
 
 Interpretation:
-- BCEWithLogitsLoss exploits the trainable cross-label path to optimize
+- `BCEWithLogitsLoss` exploits the trainable cross-label path to optimize
   probability calibration, not ranking
 - The residual destroys relative score geometry across labels
 - This is the same failure mode observed with:
@@ -192,15 +194,52 @@ Key lesson:
 > **Any trainable cross-label interaction inside the BCE training loop is a dead end
 > for this architecture.**
 
-Implication:
-- Label correlations must already be captured implicitly by:
+---
+
+#### 1b. Post-hoc residuals trained on frozen base model (no collapse, still worse)
+
+**Model:** `torch_per_label_conv_posthoc_residual`  
+**Setup:**
+1. Train `PerLabelWeightedConvEnsemble` normally
+2. Stop at early peak (epoch ≈ 3)
+3. Freeze base model
+4. Train a low-rank residual on frozen logits to predict errors  
+   ```
+   target = y − sigmoid(logits_frozen)
+   ```
+5. Apply residual additively at inference time only
+
+Observed results:
+- ✅ **No catastrophic collapse**
+- ✅ Ranking geometry preserved
+- ❌ **Consistent drop in NDCG vs frozen base model**
+  - Test NDCG@10 ≈ 0.685 (vs ≈ 0.715 best base)
+  - Test NDCG@1000 also reduced
+- Residual training converges almost immediately with very small MSE
+
+Interpretation:
+- Two-stage training successfully prevents BCE from hijacking ranking
+- However, the residual still learns **probability smoothing**, not ranking corrections
+- Cross-label adjustments systematically:
+  - reduce score sharpness
+  - smooth logits toward marginal frequencies
+- This hurts top‑k ordering even when applied weakly and post-hoc
+
+Key takeaway:
+> **Even carefully constrained, post-hoc learned cross-label corrections do not
+> improve NDCG once a well-calibrated per-label ensemble is in place.**
+
+Overall implication:
+- Label co-occurrence information is already implicitly encoded by:
   - base models
-  - per-label bias terms
+  - per-label biases
   - fixed sub-linear input calibration
-- If cross-label structure is added at all, it must be:
-  - inference-only, or
-  - strictly detached from BCE gradients, or
-  - limited to top-k post-processing
+- Explicitly modeling cross-label correlations (jointly or post-hoc) consistently
+  shifts the model toward better calibration but worse ranking
+
+Conclusion:
+> Cross-label learning is not just risky — it is *unnecessary* for this setup.
+> The limiting factor is ranking sharpness, not missing label interactions.
 
 ---
 
