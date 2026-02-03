@@ -109,18 +109,22 @@ def _render_top10_table(
     )[:10]
 
     if sort_key == "test ndcg@10":
-        other = "test ndcg@1000"
-        header = "| Rank | Model | Test NDCG@10 | Test NDCG@1000 |\n"
-        sep = "|------|-------|--------------|----------------|\n"
+        header = "| Rank | Model | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |\n"
+        sep = "|------|-------|--------------|----------------|-----------|\n"
         line = (
-            "| {rank} | {model} | {v1:.6f} | {v2:.6f} |\n"
+            "| {rank} | {model} | {ndcg10:.6f} | {ndcg1000:.6f} | {f1:.6f} |\n"
         )
-    else:
-        other = "test ndcg@10"
-        header = "| Rank | Model | Test NDCG@1000 | Test NDCG@10 |\n"
-        sep = "|------|-------|----------------|--------------|\n"
+    elif sort_key == "test ndcg@1000":
+        header = "| Rank | Model | Test NDCG@1000 | Test NDCG@10 | Test F1@5 |\n"
+        sep = "|------|-------|----------------|--------------|-----------|\n"
         line = (
-            "| {rank} | {model} | {v1:.6f} | {v2:.6f} |\n"
+            "| {rank} | {model} | {ndcg1000:.6f} | {ndcg10:.6f} | {f1:.6f} |\n"
+        )
+    else:  # test f1@5
+        header = "| Rank | Model | Test F1@5 | Test NDCG@10 | Test NDCG@1000 |\n"
+        sep = "|------|-------|-----------|--------------|----------------|\n"
+        line = (
+            "| {rank} | {model} | {f1:.6f} | {ndcg10:.6f} | {ndcg1000:.6f} |\n"
         )
 
     body = []
@@ -129,8 +133,9 @@ def _render_top10_table(
             line.format(
                 rank=i,
                 model=r["model"],
-                v1=_parse_float(r[sort_key]),
-                v2=_parse_float(r[other]),
+                ndcg10=_parse_float(r.get("test ndcg@10", "")),
+                ndcg1000=_parse_float(r.get("test ndcg@1000", "")),
+                f1=_parse_float(r.get("test f1@5", "")),
             )
         )
 
@@ -216,6 +221,12 @@ def update_markdown_scoreboard(
         title="Top 10 Models by Test NDCG@1000",
     )
 
+    top10_f1 = _render_top10_table(
+        ordered_rows,
+        sort_key="test f1@5",
+        title="Top 10 Models by Test F1@5",
+    )
+
     path.write_text(
-        "".join(header + main_table + top10_ndcg10 + top10_ndcg1000)
+        "".join(header + main_table + top10_ndcg10 + top10_ndcg1000 + top10_f1)
     )
