@@ -199,11 +199,12 @@ def main():
             n_samples=n_used_test,
         )
 
-        weights = model.conv.weight.detach().cpu().numpy().reshape(-1)
+        # Log mean per-model weights (averaged over labels) for diagnostics
+        weights = model.weights.detach().cpu().mean(dim=1).numpy()
         print(
             f"Epoch {epoch:02d} | "
             f"Loss {loss.item():.6f} | "
-            f"Weights: "
+            f"Weights(mean over labels): "
             f"bonsai={weights[0]:.3f}, "
             f"fasttext={weights[1]:.3f}, "
             f"mllm={weights[2]:.3f}"
