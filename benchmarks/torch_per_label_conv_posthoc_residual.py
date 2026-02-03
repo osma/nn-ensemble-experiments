@@ -10,7 +10,7 @@ from scipy.sparse import csr_matrix
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
-from benchmarks.per_label_weighted_conv_ensemble import PerLabelWeightedConvEnsemble
+from benchmarks.torch_per_label_conv import PerLabelWeightedConvEnsemble
 
 
 class LowRankResidual(nn.Module):
