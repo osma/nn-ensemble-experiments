@@ -45,7 +45,7 @@ Interpretation:
 ---
 
 ### 2. Simple mean / mean+bias ensembles are strong baselines
-**Models:** `torch_mean_ensemble`, `torch_mean_bias_ensemble`
+**Models:** `torch_mean`, `torch_mean_bias`
 
 - Extremely stable across epochs
 - Strong performance at **NDCG@1000**
@@ -72,7 +72,7 @@ Even without automatic early stopping:
 
 ### 4. Epoch ensembling is safe but offers limited gains
 
-**Model:** `torch_per_label_conv_epoch02_03_ensemble`  
+**Model:** `torch_per_label_conv_epoch02_03`  
 **Method:** Simple convex combination of logits from two early checkpoints  
 ```
 logits = α · logits_epoch02 + (1 − α) · logits_epoch03

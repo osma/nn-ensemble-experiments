@@ -143,7 +143,7 @@ def main():
 
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model=f"torch_per_label_conv_epoch{EPOCH_A:02d}_{EPOCH_B:02d}_ensemble",
+            model=f"torch_per_label_conv_epoch{EPOCH_A:02d}_{EPOCH_B:02d}",
             dataset=split,
             metrics=metrics,
             n_samples=n_used,
