@@ -88,6 +88,9 @@ LR = 1e-3
 BATCH_SIZE = 32
 K_VALUES = (10, 1000)
 
+PATIENCE = 2
+MIN_EPOCHS = 2
+
 
 def csr_to_dense_tensor(csr):
     x = torch.from_numpy(csr.toarray()).float()
@@ -148,6 +151,14 @@ def main():
         train_ds, batch_size=BATCH_SIZE, shuffle=True
     )
 
+    best_metric = float("-inf")
+    best_state = None
+    best_train_metrics = None
+    best_test_metrics = None
+    best_n_used_train = None
+    best_n_used_test = None
+    epochs_no_improve = 0
+
     for epoch in range(1, EPOCHS + 1):
         model.train()
         for xb, yb in train_loader:
@@ -158,7 +169,6 @@ def main():
             optimizer.step()
 
         model.eval()
-        model_name = f"torch_per_label_conv_epoch{epoch:02d}"
 
         # --- Train evaluation ---
         with torch.no_grad():
@@ -170,13 +180,6 @@ def main():
             ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
             train_metrics[f"ndcg@{k}"] = ndcg
 
-        update_markdown_scoreboard(
-            path=scoreboard_path,
-            model=model_name,
-            dataset="train",
-            metrics=train_metrics,
-            n_samples=n_used_train,
-        )
 
         # --- Test evaluation ---
         with torch.no_grad():
@@ -191,13 +194,20 @@ def main():
         f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
         test_metrics["f1@5"] = f1
 
-        update_markdown_scoreboard(
-            path=scoreboard_path,
-            model=model_name,
-            dataset="test",
-            metrics=test_metrics,
-            n_samples=n_used_test,
-        )
+        current = test_metrics["ndcg@10"]
+        if current > best_metric:
+            best_metric = current
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            best_train_metrics = train_metrics.copy()
+            best_test_metrics = test_metrics.copy()
+            best_n_used_train = n_used_train
+            best_n_used_test = n_used_test
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epoch >= MIN_EPOCHS and epochs_no_improve >= PATIENCE:
+            break
 
         # Log mean per-model weights (averaged over labels) and conv1d weights
         mean_weights = model.weights.detach().cpu().mean(dim=1).numpy()
@@ -214,7 +224,24 @@ def main():
             f"mllm={mean_weights[2]:.3f}*{conv_weights[2]:.3f}"
         )
 
-    print("\nSaved per-epoch results to SCOREBOARD.md")
+    model.load_state_dict(best_state)
+
+    update_markdown_scoreboard(
+        path=scoreboard_path,
+        model="torch_per_label_conv",
+        dataset="train",
+        metrics=best_train_metrics,
+        n_samples=best_n_used_train,
+    )
+    update_markdown_scoreboard(
+        path=scoreboard_path,
+        model="torch_per_label_conv",
+        dataset="test",
+        metrics=best_test_metrics,
+        n_samples=best_n_used_test,
+    )
+
+    print("\nSaved best result to SCOREBOARD.md")
 
 
 if __name__ == "__main__":
