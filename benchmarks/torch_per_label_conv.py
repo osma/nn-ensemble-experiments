@@ -31,9 +31,9 @@ class PerLabelWeightedConvEnsemble(nn.Module):
         self.n_models = n_models
         self.n_labels = n_labels
 
-        # Per-model, per-label weights
+        # Per-model, per-label weights (start as identity; scaling handled by conv)
         self.weights = nn.Parameter(
-            torch.full((n_models, n_labels), 1.0 / n_models)
+            torch.ones((n_models, n_labels))
         )
 
         # Per-label bias
@@ -47,9 +47,9 @@ class PerLabelWeightedConvEnsemble(nn.Module):
             bias=False,
         )
 
-        # Initialize to a true sum (not mean) and freeze
+        # Initialize to a mean (not sum) and freeze
         with torch.no_grad():
-            self.sum_conv.weight.fill_(1.0)
+            self.sum_conv.weight.fill_(1.0 / n_models)
         self.sum_conv.weight.requires_grad_(False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
