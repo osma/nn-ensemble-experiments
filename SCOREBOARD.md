@@ -38,6 +38,7 @@
 | torch_per_label_conv_epoch08 | 0.708133 | 0.775570 | 0.655511 | 0.736690 | 0.500954 |
 | torch_per_label_conv_epoch09 | 0.702183 | 0.767123 | 0.646305 | 0.725070 | 0.497705 |
 | torch_per_label_conv_epoch10 | 0.698083 | 0.760200 | 0.639567 | 0.715345 | 0.494055 |
+| torch_per_label_conv_posthoc_residual | 0.731977 | 0.819270 | 0.685036 | 0.781723 | 0.530940 |
 | torch_per_label_conv_residual_epoch01 | 0.091138 | 0.237738 | 0.087029 | 0.217136 | 0.065099 |
 | torch_per_label_conv_residual_epoch02 | 0.091400 | 0.250747 | 0.092334 | 0.234509 | 0.058686 |
 | torch_per_label_conv_residual_epoch03 | 0.083371 | 0.241170 | 0.079039 | 0.220473 | 0.066588 |
