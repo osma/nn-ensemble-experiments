@@ -102,6 +102,7 @@ def main():
     )
 
     best_metric = float("-inf")
+    best_epoch = None
     best_state = None
     best_train_metrics = None
     best_test_metrics = None
@@ -147,6 +148,7 @@ def main():
         current = test_metrics["ndcg@10"]
         if current > best_metric:
             best_metric = current
+            best_epoch = epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
             best_train_metrics = train_metrics.copy()
             best_test_metrics = test_metrics.copy()
@@ -167,6 +169,7 @@ def main():
         dataset="train",
         metrics=best_train_metrics,
         n_samples=best_n_used_train,
+        epoch=best_epoch,
     )
     update_markdown_scoreboard(
         path=scoreboard_path,
@@ -174,6 +177,7 @@ def main():
         dataset="test",
         metrics=best_test_metrics,
         n_samples=best_n_used_test,
+        epoch=best_epoch,
     )
 
     print("\nSaved best result to SCOREBOARD.md")
