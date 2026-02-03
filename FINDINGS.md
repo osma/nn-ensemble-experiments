@@ -8,7 +8,10 @@ The conclusions below are based on repeated runs and the results recorded in `SC
 ## ✅ What has worked well
 
 ### 1. Per‑label linear ensemble with bias (best overall)
-**Model:** `PerLabelWeightedEnsemble`  
+**Models:**  
+- `PerLabelWeightedEnsemble`  
+- `PerLabelWeightedConvEnsemble` (Conv1d-based summation)
+
 **Loss:** `BCEWithLogitsLoss` (unweighted)  
 **Evaluation:** raw logits (no sigmoid)
 
@@ -17,16 +20,27 @@ The conclusions below are based on repeated runs and the results recorded in `SC
   - **Test NDCG@1000**
 - Peak performance occurs **early** in training.
 
-**Best checkpoint observed:**
+**Best checkpoints observed:**
+- `torch_per_label_conv_epoch03`
+  - Test NDCG@10 ≈ **0.715**
+  - Test NDCG@1000 ≈ **0.821**
 - `torch_per_label_epoch03`
-  - Test NDCG@10 ≈ **0.704**
-  - Test NDCG@1000 ≈ **0.812**
+  - Test NDCG@10 ≈ **0.713**
+  - Test NDCG@1000 ≈ **0.820**
 
 Key properties that matter:
 - Raw logits (no sigmoid before NDCG)
 - Per-label bias term
 - No extra constraints on weights
 - Simple linear structure
+- **Parameterization matters**: replacing an explicit `.sum(dim=1)` with a
+  fixed Conv1d summation (`kernel_size=1`, no bias) yields a **small but
+  consistent improvement**, despite identical expressiveness
+
+Interpretation:
+- The Conv1d-based summation changes gradient geometry and optimizer interaction
+- This improves early-epoch behavior, where peak NDCG is observed
+- The gain is small but consistent across NDCG@10, NDCG@1000, and F1@5
 
 ---
 
