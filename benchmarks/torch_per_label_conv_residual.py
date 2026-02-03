@@ -1,3 +1,5 @@
+# STATUS: DEPRECATED (failed experiment)
+# Purpose: Jointly-trained cross-label residual; causes catastrophic NDCG collapse.
 from pathlib import Path
 import sys
 

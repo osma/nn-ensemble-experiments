@@ -1,3 +1,5 @@
+# STATUS: ACTIVE (recommended base model)
+# Purpose: Best-performing per-label linear ensemble trained with BCE on raw logits.
 from pathlib import Path
 import sys
 

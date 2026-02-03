@@ -1,3 +1,5 @@
+# STATUS: ACTIVE (alternative base model)
+# Purpose: Conv1d-based summation variant of per-label linear ensemble.
 from pathlib import Path
 import sys
 

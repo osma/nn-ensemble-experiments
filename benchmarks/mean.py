@@ -1,3 +1,5 @@
+# STATUS: BASELINE
+# Purpose: Simple non-torch mean ensemble baseline.
 from pathlib import Path
 import sys
 

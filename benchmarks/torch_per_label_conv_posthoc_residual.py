@@ -1,3 +1,5 @@
+# STATUS: EXPERIMENTAL (documented negative result)
+# Purpose: Post-hoc low-rank residual on frozen logits; preserved for reference.
 from pathlib import Path
 import sys
 

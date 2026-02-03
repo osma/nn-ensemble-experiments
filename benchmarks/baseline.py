@@ -1,3 +1,5 @@
+# STATUS: BASELINE
+# Purpose: Individual base model benchmarks (no learning).
 from pathlib import Path
 
 from .metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
