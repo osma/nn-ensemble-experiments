@@ -375,6 +375,32 @@ Low-risk ideas that may still help:
 - Deeper / nonlinear ensemble models
 - Class rebalancing losses
 - Additional weight constraints
+- **Over-stabilizing the optimizer** (e.g. separate learning rates for weights/bias,
+  zero weight decay, or otherwise smoothing early training dynamics)
+
+### Why optimizer “improvements” failed
+
+A targeted experiment replaced the default `AdamW(lr=1e-3, weight_decay=0.001)`
+with a seemingly better-behaved configuration:
+- `Adam` instead of `AdamW`
+- Separate learning rates for weights and bias
+- No weight decay
+
+Observed outcome:
+- Training loss decreased faster and more smoothly
+- Per-model weights stayed almost perfectly uniform
+- **Test NDCG consistently degraded**
+
+Interpretation:
+- The best-performing ensembles rely on **early, slightly unstable optimization**
+- Mild noise and coupling between weight and bias updates in the first 2–3 epochs
+  help create sharp per-label ranking geometry
+- Making optimization “cleaner” and more decoupled suppresses this effect,
+  leading to mean-like behavior and worse NDCG
+
+Key lesson:
+> For this problem, *imperfect* optimization is a feature, not a bug.
+> Optimizer tuning that improves BCE convergence often harms ranking quality.
 
 These have repeatedly reduced NDCG in practice.
 
