@@ -153,11 +153,12 @@ def update_markdown_scoreboard(
     dataset: str,
     metrics: dict[str, float],
     n_samples: int,
+    epoch: int | None = None,
 ):
     header = [
         "# Benchmark Scoreboard\n\n",
-        "| Model | Train NDCG@10 | Train NDCG@1000 | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |\n",
-        "|-------|---------------|----------------|-------------|----------------|-----------|\n",
+        "| Model | Epoch | Train NDCG@10 | Train NDCG@1000 | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |\n",
+        "|-------|-------|---------------|----------------|-------------|----------------|-----------|\n",
     ]
 
     rows: dict[str, dict[str, str]] = {}
@@ -168,7 +169,7 @@ def update_markdown_scoreboard(
                 continue
 
             cols = [c.strip() for c in line.strip("|").split("|")]
-            if len(cols) != 6:
+            if len(cols) != 7:
                 continue
 
             if cols[0] == "Model" or all(set(c) <= {"-"} for c in cols):
@@ -176,17 +177,19 @@ def update_markdown_scoreboard(
 
             rows[cols[0]] = {
                 "model": cols[0],
-                "train ndcg@10": cols[1],
-                "train ndcg@1000": cols[2],
-                "test ndcg@10": cols[3],
-                "test ndcg@1000": cols[4],
-                "test f1@5": cols[5],
+                "epoch": cols[1],
+                "train ndcg@10": cols[2],
+                "train ndcg@1000": cols[3],
+                "test ndcg@10": cols[4],
+                "test ndcg@1000": cols[5],
+                "test f1@5": cols[6],
             }
 
     row = rows.get(
         model,
         {
             "model": model,
+            "epoch": "",
             "train ndcg@10": "",
             "train ndcg@1000": "",
             "test ndcg@10": "",
@@ -199,12 +202,15 @@ def update_markdown_scoreboard(
     for k, v in metrics.items():
         row[f"{prefix} {k}"] = f"{v:.6f}"
 
+    if epoch is not None:
+        row["epoch"] = str(epoch)
+
     rows[model] = row
 
     ordered_rows = sorted(rows.values(), key=lambda x: x["model"])
 
     main_table = [
-        f"| {r['model']} | {r['train ndcg@10']} | {r['train ndcg@1000']} | "
+        f"| {r['model']} | {r.get('epoch','')} | {r['train ndcg@10']} | {r['train ndcg@1000']} | "
         f"{r['test ndcg@10']} | {r['test ndcg@1000']} | {r['test f1@5']} |\n"
         for r in ordered_rows
     ]
