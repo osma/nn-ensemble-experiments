@@ -38,6 +38,16 @@
 | torch_per_label_conv_epoch08 | 0.708133 | 0.775570 | 0.655511 | 0.736690 | 0.500954 |
 | torch_per_label_conv_epoch09 | 0.702183 | 0.767123 | 0.646305 | 0.725070 | 0.497705 |
 | torch_per_label_conv_epoch10 | 0.698083 | 0.760200 | 0.639567 | 0.715345 | 0.494055 |
+| torch_per_label_conv_residual_epoch01 | 0.091138 | 0.237738 | 0.087029 | 0.217136 | 0.065099 |
+| torch_per_label_conv_residual_epoch02 | 0.091400 | 0.250747 | 0.092334 | 0.234509 | 0.058686 |
+| torch_per_label_conv_residual_epoch03 | 0.083371 | 0.241170 | 0.079039 | 0.220473 | 0.066588 |
+| torch_per_label_conv_residual_epoch04 | 0.090510 | 0.251135 | 0.087144 | 0.231127 | 0.067100 |
+| torch_per_label_conv_residual_epoch05 | 0.096763 | 0.250500 | 0.095708 | 0.231817 | 0.071761 |
+| torch_per_label_conv_residual_epoch06 | 0.105010 | 0.259745 | 0.100065 | 0.239383 | 0.051889 |
+| torch_per_label_conv_residual_epoch07 | 0.111808 | 0.264459 | 0.109590 | 0.244568 | 0.076134 |
+| torch_per_label_conv_residual_epoch08 | 0.104375 | 0.265331 | 0.101444 | 0.244862 | 0.075420 |
+| torch_per_label_conv_residual_epoch09 | 0.110610 | 0.259589 | 0.106542 | 0.238010 | 0.084382 |
+| torch_per_label_conv_residual_epoch10 | 0.125585 | 0.280655 | 0.112247 | 0.252641 | 0.073731 |
 | torch_per_label_epoch01 | 0.735828 | 0.835037 | 0.697101 | 0.807075 | 0.530078 |
 | torch_per_label_epoch02 | 0.749097 | 0.843980 | 0.711871 | 0.817159 | 0.540054 |
 | torch_per_label_epoch03 | 0.755397 | 0.847836 | 0.713269 | 0.819915 | 0.545921 |
