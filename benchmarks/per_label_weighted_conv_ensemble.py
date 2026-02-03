@@ -199,15 +199,19 @@ def main():
             n_samples=n_used_test,
         )
 
-        # Log mean per-model weights (averaged over labels) for diagnostics
-        weights = model.weights.detach().cpu().mean(dim=1).numpy()
+        # Log mean per-model weights (averaged over labels) and conv1d weights
+        mean_weights = model.weights.detach().cpu().mean(dim=1).numpy()
+        conv_weights = (
+            model.sum_conv.weight.detach().cpu().view(-1).numpy()
+        )
+
         print(
             f"Epoch {epoch:02d} | "
             f"Loss {loss.item():.6f} | "
-            f"Weights(mean over labels): "
-            f"bonsai={weights[0]:.3f}, "
-            f"fasttext={weights[1]:.3f}, "
-            f"mllm={weights[2]:.3f}"
+            f"Weights: "
+            f"bonsai={mean_weights[0]:.3f}*{conv_weights[0]:.3f}, "
+            f"fasttext={mean_weights[1]:.3f}*{conv_weights[1]:.3f}, "
+            f"mllm={mean_weights[2]:.3f}*{conv_weights[2]:.3f}"
         )
 
     print("\nSaved per-epoch results to SCOREBOARD.md")
