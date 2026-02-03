@@ -1,9 +1,13 @@
 from pathlib import Path
+import sys
 
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from .metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
+# Allow running as a script: `uv run benchmarks/mean_ensemble.py`
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 K = 1000
 
