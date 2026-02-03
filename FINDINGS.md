@@ -70,6 +70,45 @@ Even without automatic early stopping:
 
 ---
 
+### 4. Epoch ensembling is safe but offers limited gains
+
+**Model:** `torch_per_label_conv_epoch02_03_ensemble`  
+**Method:** Simple convex combination of logits from two early checkpoints  
+```
+logits = α · logits_epoch02 + (1 − α) · logits_epoch03
+```
+
+Observed results:
+- ✅ **Stable behavior**
+- ✅ No collapse or degradation of ranking geometry
+- ✅ Performance very close to the best single checkpoint
+- ❌ Did **not** surpass the best epoch on Test NDCG
+
+Example (Conv ensemble):
+- Best single epoch (`epoch03`):
+  - Test NDCG@10 ≈ **0.71518**
+  - Test NDCG@1000 ≈ **0.82085**
+- Epoch 02+03 ensemble:
+  - Test NDCG@10 ≈ **0.71437**
+  - Test NDCG@1000 ≈ **0.82033**
+
+Interpretation:
+- Early epochs are already very similar in ranking geometry
+- The best checkpoint (epoch 03) is already near-optimal for NDCG
+- Averaging slightly reduces sharpness, trading a tiny amount of peak ranking
+  for robustness
+
+Key takeaway:
+> **Epoch ensembling is a safe, inference-only technique that preserves ranking,
+> but it does not meaningfully improve over a well-chosen early checkpoint.**
+
+Practical implication:
+- Use **epoch 03 alone** for maximum peak performance
+- Use **epoch ensembling** as a robustness hedge if checkpoint selection
+  uncertainty is a concern
+
+---
+
 ### 4. Sub-linear input scaling significantly improves results (sqrt → log1p)
 Applying a simple preprocessing step to **all ensemble inputs** had a **large positive impact** on both:
 - **Test NDCG@10**
