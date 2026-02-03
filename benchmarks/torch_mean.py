@@ -4,7 +4,9 @@ import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from scipy.sparse import csr_matrix
+
+from benchmarks.preprocessing import csr_to_log1p_tensor, tensor_to_csr
+from benchmarks.models.torch_mean import MeanWeightedConv1D
 
 # Allow running as a script: `uv run benchmarks/torch_mean_ensemble.py`
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -21,35 +23,8 @@ PATIENCE = 2
 MIN_EPOCHS = 2
 
 
-class MeanWeightedConv1D(nn.Module):
-    """
-    Input:  (batch, 3, L)
-    Output: (batch, L)
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Conv1d(
-            in_channels=3,
-            out_channels=1,
-            kernel_size=1,
-            bias=False,
-        )
-        with torch.no_grad():
-            self.conv.weight.fill_(1.0 / 3.0)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.conv(x).squeeze(1)
-        return torch.clamp(out, min=0.0, max=1.0)
 
 
-def csr_to_dense_tensor(csr):
-    x = torch.from_numpy(csr.toarray()).float()
-    return torch.clamp(x, min=0.0)
-
-
-def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
-    return csr_matrix(t.detach().cpu().numpy())
 
 
 def main():
@@ -64,8 +39,7 @@ def main():
         load_csr("data/train-mllm.npz"),
     ]
 
-    X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
-    X_train = torch.log1p(X_train)
+    X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds], dim=1)
 
     Y_train = csr_to_dense_tensor(y_train_true)
 
@@ -78,8 +52,7 @@ def main():
         load_csr("data/test-mllm.npz"),
     ]
 
-    X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
-    X_test = torch.log1p(X_test)
+    X_test = torch.stack([csr_to_log1p_tensor(p) for p in test_preds], dim=1)
 
     model = MeanWeightedConv1D().to(DEVICE)
     optimizer = optim.AdamW(
