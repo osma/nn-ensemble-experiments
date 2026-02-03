@@ -1,5 +1,8 @@
-# Backward-compatibility shim; prefer benchmarks.metrics
-from .metrics import *  # noqa: F401,F403
+import numpy as np
+from scipy.sparse import csr_matrix
+from pathlib import Path
+
+K_DEFAULT = 1000
 
 
 def load_csr(path: str) -> csr_matrix:
@@ -47,6 +50,44 @@ def ndcg_at_k(y_true: csr_matrix, y_pred: csr_matrix, k: int = K_DEFAULT):
         ndcgs.append(dcg / idcg)
 
     return float(np.mean(ndcgs)), len(ndcgs)
+
+
+def f1_at_k(y_true: csr_matrix, y_pred: csr_matrix, k: int):
+    """
+    Compute example-based mean F1@k using top-k predictions.
+
+    Rows with zero true labels are skipped.
+    """
+    f1s = []
+
+    for i in range(y_true.shape[0]):
+        true_row = y_true.getrow(i)
+        if true_row.nnz == 0:
+            continue
+
+        pred_row = y_pred.getrow(i)
+
+        if pred_row.nnz > k:
+            topk_pos = np.argpartition(pred_row.data, -k)[-k:]
+            top_indices = pred_row.indices[topk_pos]
+        else:
+            top_indices = pred_row.indices
+
+        pred_set = set(top_indices.tolist())
+        true_set = set(true_row.indices.tolist())
+
+        tp = len(pred_set & true_set)
+        if tp == 0:
+            f1s.append(0.0)
+            continue
+
+        fp = len(pred_set) - tp
+        fn = len(true_set) - tp
+
+        f1 = (2 * tp) / (2 * tp + fp + fn)
+        f1s.append(f1)
+
+    return float(np.mean(f1s)), len(f1s)
 
 
 def _parse_float(v: str) -> float:
@@ -110,8 +151,8 @@ def update_markdown_scoreboard(
 ):
     header = [
         "# Benchmark Scoreboard\n\n",
-        "| Model | Train NDCG@10 | Train NDCG@1000 | Test NDCG@10 | Test NDCG@1000 |\n",
-        "|-------|---------------|----------------|-------------|----------------|\n",
+        "| Model | Train NDCG@10 | Train NDCG@1000 | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |\n",
+        "|-------|---------------|----------------|-------------|----------------|-----------|\n",
     ]
 
     rows: dict[str, dict[str, str]] = {}
@@ -122,7 +163,7 @@ def update_markdown_scoreboard(
                 continue
 
             cols = [c.strip() for c in line.strip("|").split("|")]
-            if len(cols) != 5:
+            if len(cols) != 6:
                 continue
 
             if cols[0] == "Model" or all(set(c) <= {"-"} for c in cols):
@@ -134,6 +175,7 @@ def update_markdown_scoreboard(
                 "train ndcg@1000": cols[2],
                 "test ndcg@10": cols[3],
                 "test ndcg@1000": cols[4],
+                "test f1@5": cols[5],
             }
 
     row = rows.get(
@@ -144,6 +186,7 @@ def update_markdown_scoreboard(
             "train ndcg@1000": "",
             "test ndcg@10": "",
             "test ndcg@1000": "",
+            "test f1@5": "",
         },
     )
 
@@ -157,7 +200,7 @@ def update_markdown_scoreboard(
 
     main_table = [
         f"| {r['model']} | {r['train ndcg@10']} | {r['train ndcg@1000']} | "
-        f"{r['test ndcg@10']} | {r['test ndcg@1000']} |\n"
+        f"{r['test ndcg@10']} | {r['test ndcg@1000']} | {r['test f1@5']} |\n"
         for r in ordered_rows
     ]
 

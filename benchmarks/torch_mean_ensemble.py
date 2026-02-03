@@ -9,7 +9,7 @@ from scipy.sparse import csr_matrix
 # Allow running as a script: `uv run benchmarks/torch_mean_ensemble.py`
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from benchmarks.ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
+from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 DEVICE = "cpu"
 EPOCHS = 10
@@ -134,6 +134,9 @@ def main():
         for k in K_VALUES:
             ndcg, n_used_test = ndcg_at_k(y_test_true, y_test_pred_csr, k=k)
             test_metrics[f"ndcg@{k}"] = ndcg
+
+        f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
+        test_metrics["f1@5"] = f1
 
         update_markdown_scoreboard(
             path=scoreboard_path,

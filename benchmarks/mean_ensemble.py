@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from .ndcg import load_csr, ndcg_at_k, update_markdown_scoreboard
+from .metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 K = 1000
 
@@ -60,6 +60,9 @@ def main():
             ndcg, n_used = ndcg_at_k(y_true, y_mean, k=k)
             print(f"NDCG@{k} = {ndcg:.6f} (computed over {n_used} samples)")
             metrics[f"ndcg@{k}"] = ndcg
+
+        f1, _ = f1_at_k(y_true, y_mean, k=5)
+        metrics["f1@5"] = f1
 
         update_markdown_scoreboard(
             path=scoreboard_path,
