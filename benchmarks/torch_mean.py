@@ -41,7 +41,7 @@ def main():
 
     X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds], dim=1)
 
-    Y_train = csr_to_dense_tensor(y_train_true)
+    Y_train = torch.from_numpy(y_train_true.toarray()).float()
 
     print("Loading test data...")
 
