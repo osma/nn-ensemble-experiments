@@ -132,10 +132,12 @@ def main():
         n_labels=n_labels,
     ).to(DEVICE)
 
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=LR,
-        weight_decay=0.001,
+    optimizer = optim.Adam(
+        [
+            {"params": model.weights, "lr": 5e-4},
+            {"params": model.bias, "lr": 1e-3},
+        ],
+        weight_decay=0.0,
         eps=1e-8,
     )
 
