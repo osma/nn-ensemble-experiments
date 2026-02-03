@@ -237,6 +237,7 @@ def main():
         dataset="train",
         metrics=best_train_metrics,
         n_samples=best_n_used_train,
+        epoch=best_epoch,
     )
     update_markdown_scoreboard(
         path=scoreboard_path,
@@ -244,6 +245,7 @@ def main():
         dataset="test",
         metrics=best_test_metrics,
         n_samples=best_n_used_test,
+        epoch=best_epoch,
     )
 
     print("\nSaved best result to SCOREBOARD.md")
