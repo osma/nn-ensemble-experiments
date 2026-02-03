@@ -169,7 +169,7 @@ def main():
             dataset=split,
             metrics=metrics,
             n_samples=n_used,
-            epoch=best_epoch,
+            epoch=BASE_EPOCH,
         )
 
     print("\nSaved results to SCOREBOARD.md")
