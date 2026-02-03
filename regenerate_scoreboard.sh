@@ -14,5 +14,6 @@ uv run python -m benchmarks.weighted_mean_ensemble
 # Torch-based benchmarks
 uv run python -m benchmarks.torch_mean_ensemble
 uv run python -m benchmarks.torch_mean_bias_ensemble
+uv run python -m benchmarks.per_label_weighted_ensemble
 
 echo "Done. SCOREBOARD.md regenerated."
