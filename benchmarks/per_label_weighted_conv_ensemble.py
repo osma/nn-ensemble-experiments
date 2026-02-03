@@ -14,14 +14,14 @@ from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_sco
 
 class PerLabelWeightedConvEnsemble(nn.Module):
     """
-    Per-model weighted ensemble implemented via Conv1d (no bias).
+    Per-label weighted ensemble with bias, using Conv1d for summation.
 
     For each label l:
-        score[l] = sum_m w[m] * x[m, l]
+        score[l] = sum_m w[m, l] * x[m, l] + b[l]
 
     Notes:
-    - Uses Conv1d(kernel_size=1) to replace an explicit sum.
-    - Weights are global per-model (not per-label).
+    - Conv1d(kernel_size=1) is used purely to implement the sum over models.
+    - Weights are per-model, per-label (same expressiveness as PerLabelWeightedEnsemble).
     - Inputs are assumed to be preprocessed with log1p.
     - Returns raw logits.
     """
@@ -31,16 +31,26 @@ class PerLabelWeightedConvEnsemble(nn.Module):
         self.n_models = n_models
         self.n_labels = n_labels
 
-        self.conv = nn.Conv1d(
+        # Per-model, per-label weights
+        self.weights = nn.Parameter(
+            torch.full((n_models, n_labels), 1.0 / n_models)
+        )
+
+        # Per-label bias
+        self.bias = nn.Parameter(torch.zeros(n_labels))
+
+        # Conv1d used only as a summation operator over models
+        self.sum_conv = nn.Conv1d(
             in_channels=n_models,
             out_channels=1,
             kernel_size=1,
             bias=False,
         )
 
-        # Initialize to a true sum (not mean)
+        # Initialize to a true sum (not mean) and freeze
         with torch.no_grad():
-            self.conv.weight.fill_(1.0)
+            self.sum_conv.weight.fill_(1.0)
+        self.sum_conv.weight.requires_grad_(False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -57,8 +67,14 @@ class PerLabelWeightedConvEnsemble(nn.Module):
                 f"n_labels={self.n_labels}, got {x.shape}"
             )
 
-        # Conv1d sums over models for each label
-        out = self.conv(x).squeeze(1)
+        # Apply per-label weights
+        weighted = x * self.weights.unsqueeze(0)
+
+        # Sum over models via Conv1d
+        summed = self.sum_conv(weighted).squeeze(1)
+
+        # Add per-label bias
+        out = summed + self.bias
         return out
 
 
