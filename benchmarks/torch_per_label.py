@@ -146,7 +146,7 @@ def main():
         train_ds, batch_size=BATCH_SIZE, shuffle=True
     )
 
-    # Early stopping: select best epoch by TRAIN NDCG@10 (no test leakage)
+    # Early stopping: select best epoch by TRAIN NDCG@1000 (no test leakage)
     best_metric = float("-inf")
     best_epoch = None
     best_state = None
@@ -190,8 +190,7 @@ def main():
         f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
         test_metrics["f1@5"] = f1
 
-        # Select best epoch by TRAIN metric to avoid test leakage
-        current = train_metrics["ndcg@10"]
+        current = train_metrics["ndcg@1000"]
         if current > best_metric:
             best_metric = current
             best_epoch = epoch

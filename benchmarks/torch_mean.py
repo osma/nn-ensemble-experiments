@@ -23,10 +23,6 @@ PATIENCE = 2
 MIN_EPOCHS = 2
 
 
-
-
-
-
 def main():
     scoreboard_path = Path("SCOREBOARD.md")
 
@@ -70,6 +66,7 @@ def main():
         train_ds, batch_size=BATCH_SIZE, shuffle=True
     )
 
+    # Early stopping: select best epoch by TRAIN NDCG@1000 (no test leakage)
     best_metric = float("-inf")
     best_epoch = None
     best_state = None
@@ -100,8 +97,7 @@ def main():
             ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
             train_metrics[f"ndcg@{k}"] = ndcg
 
-
-        # --- Test evaluation ---
+        # --- Test evaluation (computed for reporting only; NOT used for selection) ---
         with torch.no_grad():
             output_test = model(X_test)
 
@@ -114,7 +110,7 @@ def main():
         f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
         test_metrics["f1@5"] = f1
 
-        current = test_metrics["ndcg@10"]
+        current = train_metrics["ndcg@1000"]
         if current > best_metric:
             best_metric = current
             best_epoch = epoch
