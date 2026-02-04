@@ -43,9 +43,7 @@ class PerLabelWeightedEnsemble(nn.Module):
         self.n_labels = n_labels
 
         # Per-model, per-label weights
-        self.weights = nn.Parameter(
-            torch.full((n_models, n_labels), 1.0 / n_models)
-        )
+        self.weights = nn.Parameter(torch.full((n_models, n_labels), 1.0 / n_models))
 
         # Per-label bias
         self.bias = nn.Parameter(torch.zeros(n_labels))
@@ -148,8 +146,7 @@ def main():
         train_ds, batch_size=BATCH_SIZE, shuffle=True
     )
 
-    # Early stopping disabled for now
-
+    # Early stopping: select best epoch by TRAIN NDCG@10 (no test leakage)
     best_metric = float("-inf")
     best_epoch = None
     best_state = None
@@ -180,8 +177,7 @@ def main():
             ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
             train_metrics[f"ndcg@{k}"] = ndcg
 
-
-        # --- Test evaluation ---
+        # --- Test evaluation (computed for reporting only; NOT used for selection) ---
         with torch.no_grad():
             test_scores = model(X_test)
 
@@ -194,7 +190,8 @@ def main():
         f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
         test_metrics["f1@5"] = f1
 
-        current = test_metrics["ndcg@10"]
+        # Select best epoch by TRAIN metric to avoid test leakage
+        current = train_metrics["ndcg@10"]
         if current > best_metric:
             best_metric = current
             best_epoch = epoch
