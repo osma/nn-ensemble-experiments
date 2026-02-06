@@ -7,6 +7,7 @@ import time
 # Allow running as a script: `uv run benchmarks/torch_per_label_freq_gate.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
@@ -33,9 +34,20 @@ EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
 
-# Regularization strength for the frequency-based residual weight correction.
+# Early stopping selection metric for this model.
+# - "ndcg10": select by train NDCG@10 on the fixed train subset
+# - "ndcg1000": select by train NDCG@1000 on the fixed train subset
+# - "mix": select by a weighted mix of both (recommended default)
+EARLY_STOP_METRIC = "mix"
+EARLY_STOP_MIX_W10 = 0.7
+EARLY_STOP_MIX_W1000 = 0.3
+
+# Default regularization strength for the frequency-based residual weight correction.
 # Higher -> pushes the model closer to plain torch_per_label behavior.
-LAMBDA_DELTA = 1e-3
+LAMBDA_DELTA_DEFAULT = 1e-3
+
+# Default alpha_max for bounded alpha.
+ALPHA_MAX_DEFAULT = 0.5
 
 
 def csr_to_dense_tensor(csr):
@@ -320,7 +332,22 @@ def _print_diagnostics(
     print("=== End diagnostics ===\n")
 
 
-def main():
+def _early_stop_score(train_ndcg10: float, train_ndcg1000: float) -> float:
+    if EARLY_STOP_METRIC == "ndcg10":
+        return float(train_ndcg10)
+    if EARLY_STOP_METRIC == "ndcg1000":
+        return float(train_ndcg1000)
+    if EARLY_STOP_METRIC == "mix":
+        return float(EARLY_STOP_MIX_W10 * train_ndcg10 + EARLY_STOP_MIX_W1000 * train_ndcg1000)
+    raise ValueError(f"Unknown EARLY_STOP_METRIC={EARLY_STOP_METRIC!r}")
+
+
+def _train_one(
+    *,
+    alpha_max: float,
+    lambda_delta: float,
+    update_scoreboard: bool,
+) -> dict[str, object]:
     scoreboard_path = Path("SCOREBOARD.md")
 
     print("Using device:", DEVICE)
@@ -372,7 +399,7 @@ def main():
         label_feats=label_feats,
         hidden=16,
         alpha_init=0.1,
-        alpha_max=0.5,
+        alpha_max=alpha_max,
     ).to(DEVICE)
 
     optimizer = optim.AdamW(
@@ -385,6 +412,9 @@ def main():
     criterion = nn.BCEWithLogitsLoss()
 
     print("Starting training...")
+    print(
+        f"Config | alpha_max={alpha_max:.6f} | lambda_delta={lambda_delta:.6g} | early_stop={EARLY_STOP_METRIC}"
+    )
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
     train_loader = torch.utils.data.DataLoader(
@@ -394,7 +424,7 @@ def main():
         pin_memory=(DEVICE.type == "cuda"),
     )
 
-    # Early stopping: select best epoch by TRAIN NDCG@1000 (no test leakage)
+    # Early stopping: select best epoch by train subset metric (no test leakage)
     best_metric = float("-inf")
     best_epoch = None
     best_state = None
@@ -416,11 +446,12 @@ def main():
                 optimizer.zero_grad()
                 logits = model(xb)
 
-                # Regularize the frequency-based residual so it stays small unless useful.
+                # Regularize the *applied* frequency-based residual so it stays small unless useful.
                 dw = model.delta_w()
-                reg = (dw * dw).mean()
+                delta_scaled = model.alpha() * dw
+                reg = (delta_scaled * delta_scaled).mean()
 
-                loss = criterion(logits, yb) + (LAMBDA_DELTA * reg)
+                loss = criterion(logits, yb) + (lambda_delta * reg)
                 loss.backward()
                 optimizer.step()
 
@@ -429,6 +460,7 @@ def main():
             train_scores_eval = _predict_in_batches(model, X_train_eval)
 
         with _Timer() as t_ndcg_train:
+            train_ndcg10, _ = ndcg_at_k_dense(y_train_true_eval, train_scores_eval, k=10)
             train_ndcg1000, _ = ndcg_at_k_dense(
                 y_train_true_eval, train_scores_eval, k=1000
             )
@@ -455,11 +487,13 @@ def main():
         def _dt(timer: _Timer) -> float:
             return float(timer.dt) if timer.dt is not None else 0.0
 
+        current = _early_stop_score(train_ndcg10, train_ndcg1000)
+
         print(
             f"Epoch {epoch:02d} timing | "
             f"train_step={_dt(t_train_step):.3f}s | "
             f"pred_train={_dt(t_pred_train):.3f}s | "
-            f"ndcg_train@1000={_dt(t_ndcg_train):.3f}s | "
+            f"ndcg_train@10={train_ndcg10:.6f} ndcg_train@1000={train_ndcg1000:.6f} sel={current:.6f} | "
             f"pred_test={_dt(t_pred_test):.3f}s | "
             f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
             f"f1@5={_dt(t_f1):.3f}s | "
@@ -468,7 +502,6 @@ def main():
             f"total={epoch_dt:.3f}s"
         )
 
-        current = train_ndcg1000
         if current > best_metric:
             best_metric = current
             best_epoch = epoch
@@ -494,31 +527,40 @@ def main():
             break
 
     assert best_state is not None
+    assert best_epoch is not None
+    assert best_train_metrics is not None
+    assert best_test_metrics is not None
+    assert best_n_used_train is not None
+    assert best_n_used_test is not None
+
     model.load_state_dict(best_state)
 
-    update_markdown_scoreboard(
-        path=scoreboard_path,
-        model="torch_per_label_freq_gate",
-        dataset="train",
-        metrics=best_train_metrics,
-        n_samples=best_n_used_train,
-        epoch=best_epoch,
-    )
-    update_markdown_scoreboard(
-        path=scoreboard_path,
-        model="torch_per_label_freq_gate",
-        dataset="test",
-        metrics=best_test_metrics,
-        n_samples=best_n_used_test,
-        epoch=best_epoch,
-    )
+    if update_scoreboard:
+        update_markdown_scoreboard(
+            path=scoreboard_path,
+            model="torch_per_label_freq_gate",
+            dataset="train",
+            metrics=best_train_metrics,
+            n_samples=best_n_used_train,
+            epoch=best_epoch,
+        )
+        update_markdown_scoreboard(
+            path=scoreboard_path,
+            model="torch_per_label_freq_gate",
+            dataset="test",
+            metrics=best_test_metrics,
+            n_samples=best_n_used_test,
+            epoch=best_epoch,
+        )
 
     print(
         "\nFinal test metrics | "
         f"ndcg@10={best_test_metrics['ndcg@10']:.6f} | "
         f"ndcg@1000={best_test_metrics['ndcg@1000']:.6f} | "
         f"f1@5={best_test_metrics['f1@5']:.6f} | "
-        f"epoch={best_epoch}"
+        f"epoch={best_epoch} | "
+        f"alpha_max={alpha_max:.6f} | "
+        f"lambda_delta={lambda_delta:.6g}"
     )
 
     _print_diagnostics(
@@ -527,7 +569,100 @@ def main():
         model_names=["bonsai", "fasttext", "mllm"],
     )
 
-    print("\nSaved best result to SCOREBOARD.md")
+    if update_scoreboard:
+        print("\nSaved best result to SCOREBOARD.md")
+
+    return {
+        "alpha_max": float(alpha_max),
+        "lambda_delta": float(lambda_delta),
+        "best_epoch": int(best_epoch),
+        "best_sel_metric": float(best_metric),
+        "test_ndcg10": float(best_test_metrics["ndcg@10"]),
+        "test_ndcg1000": float(best_test_metrics["ndcg@1000"]),
+        "test_f1_5": float(best_test_metrics["f1@5"]),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="Run a small grid over (alpha_max, lambda_delta) and keep the best by the early-stop metric.",
+    )
+    parser.add_argument(
+        "--alpha-max",
+        type=float,
+        default=ALPHA_MAX_DEFAULT,
+        help="alpha_max for bounded alpha (single-run mode).",
+    )
+    parser.add_argument(
+        "--lambda-delta",
+        type=float,
+        default=LAMBDA_DELTA_DEFAULT,
+        help="Regularization strength for applied residual (single-run mode).",
+    )
+    args = parser.parse_args()
+
+    if not args.sweep:
+        _train_one(
+            alpha_max=float(args.alpha_max),
+            lambda_delta=float(args.lambda_delta),
+            update_scoreboard=True,
+        )
+        return
+
+    # Small sweep (recommended starting grid)
+    alpha_max_grid = [0.5, 1.0, 2.0]
+    lambda_grid = [1e-4, 3e-4, 1e-3]
+
+    results: list[dict[str, object]] = []
+    best = None
+
+    for amax in alpha_max_grid:
+        for lam in lambda_grid:
+            print("\n" + "=" * 80)
+            print(f"SWEEP RUN | alpha_max={amax} | lambda_delta={lam}")
+            print("=" * 80 + "\n")
+
+            r = _train_one(alpha_max=amax, lambda_delta=lam, update_scoreboard=False)
+            results.append(r)
+
+            if best is None or float(r["best_sel_metric"]) > float(best["best_sel_metric"]):
+                best = r
+
+    assert best is not None
+
+    print("\n" + "=" * 80)
+    print("SWEEP SUMMARY (sorted by selection metric desc)")
+    print("=" * 80)
+    results_sorted = sorted(results, key=lambda x: float(x["best_sel_metric"]), reverse=True)
+    for r in results_sorted:
+        print(
+            f"sel={float(r['best_sel_metric']):.6f} | "
+            f"epoch={int(r['best_epoch']):02d} | "
+            f"alpha_max={float(r['alpha_max']):.3f} | "
+            f"lambda_delta={float(r['lambda_delta']):.1e} | "
+            f"test ndcg@10={float(r['test_ndcg10']):.6f} | "
+            f"test ndcg@1000={float(r['test_ndcg1000']):.6f} | "
+            f"test f1@5={float(r['test_f1_5']):.6f}"
+        )
+
+    print("\nBest config by selection metric:")
+    print(
+        f"alpha_max={float(best['alpha_max']):.6f} | "
+        f"lambda_delta={float(best['lambda_delta']):.6g} | "
+        f"epoch={int(best['best_epoch'])} | "
+        f"sel={float(best['best_sel_metric']):.6f}"
+    )
+
+    # Re-run best config and update scoreboard
+    print("\nRe-running best config to update SCOREBOARD.md...\n")
+    _train_one(
+        alpha_max=float(best["alpha_max"]),
+        lambda_delta=float(best["lambda_delta"]),
+        update_scoreboard=True,
+    )
 
 
 if __name__ == "__main__":
