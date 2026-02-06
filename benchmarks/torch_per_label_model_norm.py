@@ -79,37 +79,53 @@ EARLY_STOP_SEED = 1337
 
 EPS = 1e-6
 
+# Robust scaling configuration
+ROBUST_Q = 0.90  # use p90 of nonzero values per model (train only)
+
 
 def csr_to_dense_log1p(csr) -> torch.Tensor:
     x = torch.from_numpy(csr.toarray()).float()
     return torch.log1p(torch.clamp(x, min=0.0))
 
 
-def _compute_per_model_nonzero_scale(X_train: torch.Tensor) -> torch.Tensor:
+def _compute_per_model_nonzero_robust_scale(X_train: torch.Tensor, q: float = ROBUST_Q) -> torch.Tensor:
     """
-    Compute per-model scale (std) over nonzero entries only.
+    Compute per-model robust scale over nonzero entries only.
+
+    We use a high quantile (default p90) to represent the "typical high" score
+    magnitude while being less sensitive than max and less fragile than std.
 
     Args:
         X_train: (N, M, L) CPU tensor
+        q: quantile in (0,1], e.g. 0.9
 
     Returns:
         scale: (M,) CPU tensor (>= EPS)
     """
     if X_train.ndim != 3:
         raise ValueError(f"Expected X_train to have shape (N,M,L), got {X_train.shape}")
+    if not (0.0 < q <= 1.0):
+        raise ValueError("q must be in (0, 1]")
 
     n_models = X_train.shape[1]
     scale = torch.ones(n_models, dtype=torch.float32)
 
-    # Compute per-model std to avoid huge temporary masks.
     for m in range(n_models):
         xm = X_train[:, m, :]  # (N, L)
         nz = xm[xm != 0.0]
         if nz.numel() == 0:
             scale[m] = 1.0
             continue
-        s = nz.std(unbiased=False)
-        scale[m] = s if float(s) > EPS else torch.tensor(EPS, dtype=torch.float32)
+
+        # torch.quantile is available in modern torch; keep on CPU.
+        s = torch.quantile(nz, q)
+
+        # Guard against degenerate scales
+        s_val = float(s.item())
+        if not np.isfinite(s_val) or s_val <= EPS:
+            scale[m] = 1.0
+        else:
+            scale[m] = s
 
     return scale
 
@@ -176,9 +192,12 @@ def main():
     # Y_train on CPU (labels are 0/1)
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
 
-    # Compute per-model scale from train only (nonzero entries)
-    scale = _compute_per_model_nonzero_scale(X_train)
-    print("Per-model nonzero scale (std) | " f"scale={scale.numpy().round(6).tolist()}")
+    # Compute per-model robust scale from train only (nonzero entries)
+    scale = _compute_per_model_nonzero_robust_scale(X_train, q=ROBUST_Q)
+    print(
+        f"Per-model nonzero robust scale (p{int(ROBUST_Q*100):d}) | "
+        f"scale={scale.numpy().round(6).tolist()}"
+    )
 
     # Apply scaling-only normalization to train in-place
     _apply_per_model_scale_norm_inplace(X_train, scale)
