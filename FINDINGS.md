@@ -230,7 +230,31 @@ Practical takeaway:
 
 ---
 
-### 3. Simple mean / mean+bias ensembles are strong baselines
+### 3. Frequency-aware regularization (shrinkage) is competitive but not clearly better than gating
+**Model:** `torch_per_label_freq_reg`  
+**Mechanism:** add frequency-scaled L2 penalties on weights and bias:
+
+- `reg_w = mean_l g(l) * ||w[:,l]||^2`
+- `reg_b = mean_l g(l) * b[l]^2`
+- where `g(l)` is a function of label frequency (e.g. `1/sqrt(count+1)` or `1/(log1p(count)+1)`)
+
+Observed outcome (from a sweep over `freq_mode ∈ {inv_sqrt, inv_log}` and small grids of `lambda_w`, `lambda_b`):
+- Best results occur with **very small** regularization strengths (often `lambda_w=0` and small `lambda_b`).
+- Moderate-to-large `lambda_w` (e.g. `1e-4..3e-4`) causes a **large drop** in test NDCG, indicating the per-label weights need freedom and do not tolerate strong shrinkage.
+- The best run recorded in `SCOREBOARD.md` is competitive with the best models:
+  - `torch_per_label_freq_reg`: Test NDCG@10 **0.708792**, Test NDCG@1000 **0.814641**, Test F1@5 **0.540988** (epoch 4)
+
+Interpretation:
+- Frequency-aware shrinkage can act as a mild regularizer / calibration prior, but it does not consistently beat the more direct frequency-residual approach (`torch_per_label_freq_gate`) on NDCG.
+- The gains (when present) are small and within the “near-tie” regime; selection metrics on a small train subset can be weakly discriminative.
+
+Practical takeaway:
+> If you want the best NDCG, prefer `torch_per_label_freq_gate`.  
+> If you want a simpler frequency-aware tweak that is still competitive (and can slightly help F1@5), `torch_per_label_freq_reg` is a reasonable option — but keep `lambda_w` very small.
+
+---
+
+### 4. Simple mean / mean+bias ensembles are strong baselines
 **Models:** `torch_mean`, `torch_mean_bias`
 
 - Extremely stable across epochs
@@ -244,7 +268,7 @@ These are excellent:
 
 ---
 
-### 4. Early epochs matter more than convergence
+### 5. Early epochs matter more than convergence
 Across multiple runs:
 - Training loss keeps improving
 - **Test NDCG peaks early** (epoch 2–4)
@@ -256,7 +280,7 @@ Even without automatic early stopping:
 
 ---
 
-### 5. Epoch ensembling is safe but offers limited gains
+### 6. Epoch ensembling is safe but offers limited gains
 
 **Model:** `torch_per_label_conv_epoch02_03`  
 **Method:** Simple convex combination of logits from two early checkpoints  
@@ -295,7 +319,7 @@ Practical implication:
 
 ---
 
-### 6. Sub-linear input scaling significantly improves results (sqrt → log1p)
+### 7. Sub-linear input scaling significantly improves results (sqrt → log1p)
 Applying a simple preprocessing step to **all ensemble inputs** had a **large positive impact** on both:
 - **Test NDCG@10**
 - **Test NDCG@1000**
