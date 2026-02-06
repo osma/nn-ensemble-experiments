@@ -3,16 +3,15 @@
 from pathlib import Path
 import sys
 
+# Allow running as a script: `uv run benchmarks/torch_per_label.py`
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
 from benchmarks.device import get_device
-
-# Allow running as a script: `uv run benchmarks/per_label_weighted_ensemble.py`
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
 from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 

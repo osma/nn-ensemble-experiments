@@ -1,15 +1,14 @@
 from pathlib import Path
 import sys
 
+# Allow running as a script: `uv run benchmarks/epoch_ensemble.py`
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import torch
 import numpy as np
 from scipy.sparse import csr_matrix
 
 from benchmarks.device import get_device
-
-# Allow running as a script: `uv run benchmarks/epoch_ensemble.py`
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
 from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 
