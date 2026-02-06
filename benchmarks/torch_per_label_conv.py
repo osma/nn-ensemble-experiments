@@ -292,6 +292,13 @@ def main():
         epoch=best_epoch,
     )
 
+    print(
+        "\nFinal test metrics | "
+        f"ndcg@10={best_test_metrics['ndcg@10']:.6f} | "
+        f"ndcg@1000={best_test_metrics['ndcg@1000']:.6f} | "
+        f"f1@5={best_test_metrics['f1@5']:.6f} | "
+        f"epoch={best_epoch}"
+    )
     print("\nSaved best result to SCOREBOARD.md")
 
 
