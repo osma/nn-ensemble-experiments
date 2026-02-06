@@ -338,8 +338,14 @@ def _early_stop_score(train_ndcg10: float, train_ndcg1000: float) -> float:
     if EARLY_STOP_METRIC == "ndcg1000":
         return float(train_ndcg1000)
     if EARLY_STOP_METRIC == "mix":
-        return float(EARLY_STOP_MIX_W10 * train_ndcg10 + EARLY_STOP_MIX_W1000 * train_ndcg1000)
+        return float(
+            EARLY_STOP_MIX_W10 * train_ndcg10 + EARLY_STOP_MIX_W1000 * train_ndcg1000
+        )
     raise ValueError(f"Unknown EARLY_STOP_METRIC={EARLY_STOP_METRIC!r}")
+
+
+def _rms(t: torch.Tensor) -> float:
+    return float(torch.sqrt(torch.mean(t * t)).item())
 
 
 def _train_one(
@@ -432,6 +438,9 @@ def _train_one(
     best_test_metrics = None
     best_n_used_train = None
     best_n_used_test = None
+    best_alpha = None
+    best_rms_alpha_delta = None
+    best_loss = None
     epochs_no_improve = 0
 
     for epoch in range(1, EPOCHS + 1):
@@ -489,6 +498,11 @@ def _train_one(
 
         current = _early_stop_score(train_ndcg10, train_ndcg1000)
 
+        # Diagnostics scalars for this epoch (cheap)
+        with torch.no_grad():
+            alpha_now = float(model.alpha().detach().cpu())
+            rms_alpha_delta_now = _rms((model.alpha() * model.delta_w()).detach().cpu())
+
         print(
             f"Epoch {epoch:02d} timing | "
             f"train_step={_dt(t_train_step):.3f}s | "
@@ -498,7 +512,8 @@ def _train_one(
             f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
             f"f1@5={_dt(t_f1):.3f}s | "
             f"loss={loss.item():.6f} | "
-            f"alpha={float(model.alpha().detach().cpu()):.4f} | "
+            f"alpha={alpha_now:.4f} | "
+            f"rms(alpha*delta_w)={rms_alpha_delta_now:.6f} | "
             f"total={epoch_dt:.3f}s"
         )
 
@@ -506,6 +521,9 @@ def _train_one(
             best_metric = current
             best_epoch = epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            best_alpha = alpha_now
+            best_rms_alpha_delta = rms_alpha_delta_now
+            best_loss = float(loss.item())
 
             # Compute full train metrics only for the best epoch snapshot
             full_train_scores = _predict_in_batches(model, X_train)
@@ -532,6 +550,9 @@ def _train_one(
     assert best_test_metrics is not None
     assert best_n_used_train is not None
     assert best_n_used_test is not None
+    assert best_alpha is not None
+    assert best_rms_alpha_delta is not None
+    assert best_loss is not None
 
     model.load_state_dict(best_state)
 
@@ -560,7 +581,10 @@ def _train_one(
         f"f1@5={best_test_metrics['f1@5']:.6f} | "
         f"epoch={best_epoch} | "
         f"alpha_max={alpha_max:.6f} | "
-        f"lambda_delta={lambda_delta:.6g}"
+        f"lambda_delta={lambda_delta:.6g} | "
+        f"alpha(best)={best_alpha:.6f} | "
+        f"rms(alpha*delta_w)(best)={best_rms_alpha_delta:.6f} | "
+        f"loss(best)={best_loss:.6f}"
     )
 
     _print_diagnostics(
@@ -577,6 +601,9 @@ def _train_one(
         "lambda_delta": float(lambda_delta),
         "best_epoch": int(best_epoch),
         "best_sel_metric": float(best_metric),
+        "best_loss": float(best_loss),
+        "alpha_best": float(best_alpha),
+        "rms_alpha_delta_best": float(best_rms_alpha_delta),
         "test_ndcg10": float(best_test_metrics["ndcg@10"]),
         "test_ndcg1000": float(best_test_metrics["ndcg@1000"]),
         "test_f1_5": float(best_test_metrics["f1@5"]),
@@ -612,9 +639,13 @@ def main():
         )
         return
 
-    # Small sweep (recommended starting grid)
-    alpha_max_grid = [0.5, 1.0, 2.0]
-    lambda_grid = [1e-4, 3e-4, 1e-3]
+    # Sweep grid tuned for the *applied-correction* regularizer:
+    #   loss = BCE + lambda_delta * mean((alpha * delta_w)^2)
+    #
+    # Empirically, useful lambda_delta is typically ~0.03–0.1 (sometimes up to ~0.3)
+    # when alpha is ~0.1 and alpha_max ~0.5.
+    alpha_max_grid = [0.25, 0.5, 0.75]
+    lambda_grid = [0.01, 0.02, 0.03, 0.05, 0.07, 0.10, 0.15, 0.20, 0.30]
 
     results: list[dict[str, object]] = []
     best = None
@@ -642,7 +673,10 @@ def main():
             f"sel={float(r['best_sel_metric']):.6f} | "
             f"epoch={int(r['best_epoch']):02d} | "
             f"alpha_max={float(r['alpha_max']):.3f} | "
-            f"lambda_delta={float(r['lambda_delta']):.1e} | "
+            f"lambda_delta={float(r['lambda_delta']):.3f} | "
+            f"alpha(best)={float(r['alpha_best']):.4f} | "
+            f"rms(alpha*delta_w)(best)={float(r['rms_alpha_delta_best']):.6f} | "
+            f"loss(best)={float(r['best_loss']):.6f} | "
             f"test ndcg@10={float(r['test_ndcg10']):.6f} | "
             f"test ndcg@1000={float(r['test_ndcg1000']):.6f} | "
             f"test f1@5={float(r['test_f1_5']):.6f}"
@@ -653,7 +687,10 @@ def main():
         f"alpha_max={float(best['alpha_max']):.6f} | "
         f"lambda_delta={float(best['lambda_delta']):.6g} | "
         f"epoch={int(best['best_epoch'])} | "
-        f"sel={float(best['best_sel_metric']):.6f}"
+        f"sel={float(best['best_sel_metric']):.6f} | "
+        f"alpha(best)={float(best['alpha_best']):.6f} | "
+        f"rms(alpha*delta_w)(best)={float(best['rms_alpha_delta_best']):.6f} | "
+        f"loss(best)={float(best['best_loss']):.6f}"
     )
 
     # Re-run best config and update scoreboard
