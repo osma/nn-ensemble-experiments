@@ -10,7 +10,12 @@ import torch.optim as optim
 from scipy.sparse import csr_matrix
 
 from benchmarks.device import get_device
-from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
+from benchmarks.metrics import (
+    load_csr,
+    ndcg_at_k_dense,
+    f1_at_k_dense,
+    update_markdown_scoreboard,
+)
 
 DEVICE = get_device()
 EPOCHS = 10
@@ -151,23 +156,21 @@ def main():
             loss.backward()
             optimizer.step()
 
-        # --- Train evaluation (batched) ---
+        # --- Train evaluation (batched; no CSR conversion) ---
         full_train_output = _predict_in_batches(model, X_train)
-        y_train_pred_csr = tensor_to_csr(full_train_output)
         train_metrics = {}
         for k in K_VALUES:
-            ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
+            ndcg, n_used_train = ndcg_at_k_dense(y_train_true, full_train_output, k=k)
             train_metrics[f"ndcg@{k}"] = ndcg
 
-        # --- Test evaluation (batched; reporting only) ---
+        # --- Test evaluation (batched; no CSR conversion) ---
         output_test = _predict_in_batches(model, X_test)
-        y_test_pred_csr = tensor_to_csr(output_test)
         test_metrics = {}
         for k in K_VALUES:
-            ndcg, n_used_test = ndcg_at_k(y_test_true, y_test_pred_csr, k=k)
+            ndcg, n_used_test = ndcg_at_k_dense(y_test_true, output_test, k=k)
             test_metrics[f"ndcg@{k}"] = ndcg
 
-        f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
+        f1, _ = f1_at_k_dense(y_test_true, output_test, k=5)
         test_metrics["f1@5"] = f1
 
         current = train_metrics["ndcg@1000"]

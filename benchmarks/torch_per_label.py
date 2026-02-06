@@ -13,7 +13,12 @@ import torch.optim as optim
 from scipy.sparse import csr_matrix
 
 from benchmarks.device import get_device
-from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
+from benchmarks.metrics import (
+    load_csr,
+    ndcg_at_k_dense,
+    f1_at_k_dense,
+    update_markdown_scoreboard,
+)
 
 
 class PerLabelWeightedEnsemble(nn.Module):
@@ -222,40 +227,38 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-        # --- Train evaluation (batched; no full-tensor .to(DEVICE)) ---
+        # --- Train evaluation (batched; no CSR conversion) ---
         with _Timer() as t_pred_train:
             train_scores = _predict_in_batches(model, X_train)
-
-        with _Timer() as t_csr_train:
-            y_train_pred_csr = tensor_to_csr(train_scores)
 
         train_metrics = {}
         t_ndcg_train: dict[int, float] = {}
         for k in K_VALUES:
             with _Timer() as t:
-                ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
+                ndcg, n_used_train = ndcg_at_k_dense(
+                    y_train_true, train_scores, k=k
+                )
             assert t.dt is not None
             t_ndcg_train[k] = t.dt
             train_metrics[f"ndcg@{k}"] = ndcg
 
-        # --- Test evaluation (batched; reporting only) ---
+        # --- Test evaluation (batched; no CSR conversion) ---
         with _Timer() as t_pred_test:
             test_scores = _predict_in_batches(model, X_test)
-
-        with _Timer() as t_csr_test:
-            y_test_pred_csr = tensor_to_csr(test_scores)
 
         test_metrics = {}
         t_ndcg_test: dict[int, float] = {}
         for k in K_VALUES:
             with _Timer() as t:
-                ndcg, n_used_test = ndcg_at_k(y_test_true, y_test_pred_csr, k=k)
+                ndcg, n_used_test = ndcg_at_k_dense(
+                    y_test_true, test_scores, k=k
+                )
             assert t.dt is not None
             t_ndcg_test[k] = t.dt
             test_metrics[f"ndcg@{k}"] = ndcg
 
         with _Timer() as t_f1:
-            f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
+            f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
         test_metrics["f1@5"] = f1
 
         epoch_dt = time.perf_counter() - epoch_t0
@@ -266,9 +269,9 @@ def main():
         print(
             f"Epoch {epoch:02d} timing | "
             f"train_step={_dt(t_train_step):.3f}s | "
-            f"pred_train={_dt(t_pred_train):.3f}s | csr_train={_dt(t_csr_train):.3f}s | "
+            f"pred_train={_dt(t_pred_train):.3f}s | "
             f"ndcg_train@10={t_ndcg_train.get(10, 0.0):.3f}s ndcg_train@1000={t_ndcg_train.get(1000, 0.0):.3f}s | "
-            f"pred_test={_dt(t_pred_test):.3f}s | csr_test={_dt(t_csr_test):.3f}s | "
+            f"pred_test={_dt(t_pred_test):.3f}s | "
             f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
             f"f1@5={_dt(t_f1):.3f}s | "
             f"total={epoch_dt:.3f}s"
