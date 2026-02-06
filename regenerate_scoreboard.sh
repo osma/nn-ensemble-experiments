@@ -18,5 +18,8 @@ uv run python -m benchmarks.torch_mean
 uv run python -m benchmarks.torch_mean_bias
 uv run python -m benchmarks.torch_per_label
 uv run python -m benchmarks.torch_per_label_conv
+uv run python -m benchmarks.torch_per_label_freq_gate
+uv run python -m benchmarks.torch_per_label_freq_reg
+uv run python -m benchmarks.torch_per_label_model_norm
 
 echo "Done. SCOREBOARD.md regenerated."
