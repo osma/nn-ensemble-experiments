@@ -128,9 +128,10 @@ class PerLabelFreqGatedEnsemble(nn.Module):
 
         w_eff[m,l] = base_w[m,l] + alpha * delta_w[m,l](freq[l])
 
-    This is intentionally more stable than multiplicative gating, because it
-    preserves the strong per-label baseline and lets frequency add a small,
-    regularized adjustment.
+    Changes vs earlier versions:
+    - delta_w is constrained to be zero-mean across models per label, so it can
+      only redistribute trust between models (not scale all models together).
+    - alpha is constrained to be nonnegative and bounded: alpha in (0, alpha_max).
 
     Input:
         x: (batch, M, L) log1p-scaled base predictions
@@ -145,6 +146,7 @@ class PerLabelFreqGatedEnsemble(nn.Module):
         label_feats: torch.Tensor,
         hidden: int = 16,
         alpha_init: float = 0.1,
+        alpha_max: float = 0.5,
     ):
         super().__init__()
         if label_feats.ndim != 2:
@@ -153,9 +155,12 @@ class PerLabelFreqGatedEnsemble(nn.Module):
             raise ValueError(
                 f"label_feats has {label_feats.shape[0]} labels, expected {n_labels}"
             )
+        if alpha_max <= 0:
+            raise ValueError("alpha_max must be positive")
 
         self.n_models = n_models
         self.n_labels = n_labels
+        self.alpha_max = float(alpha_max)
 
         # Base per-model, per-label weights (like torch_per_label)
         self.base_w = nn.Parameter(torch.full((n_models, n_labels), 1.0 / n_models))
@@ -174,17 +179,35 @@ class PerLabelFreqGatedEnsemble(nn.Module):
             nn.Linear(hidden, n_models),
         )
 
-        # Small scaling for the residual; learnable but initialized small.
-        self.alpha = nn.Parameter(torch.tensor(float(alpha_init)))
+        # Bounded alpha: alpha = alpha_max * sigmoid(alpha_raw)
+        # Initialize alpha_raw so that alpha ~= alpha_init.
+        alpha_init = float(alpha_init)
+        alpha_init = max(1e-6, min(alpha_init, self.alpha_max - 1e-6))
+        p = alpha_init / self.alpha_max  # in (0,1)
+        alpha_raw_init = float(np.log(p / (1.0 - p)))
+        self.alpha_raw = nn.Parameter(torch.tensor(alpha_raw_init, dtype=torch.float32))
+
+    def alpha(self) -> torch.Tensor:
+        return torch.sigmoid(self.alpha_raw) * self.alpha_max
 
     def delta_w(self) -> torch.Tensor:
         """
         Returns:
             delta_w: (M, L) residual weight correction derived from label_feats.
+
+        Constraint:
+            For each label l, mean_m delta_w[m,l] == 0.
+            This forces the frequency module to redistribute trust between models
+            rather than scaling all models together.
         """
+        # (L, M)
+        dw_lm = self.delta(self.label_feats)
+
+        # Zero-mean across models per label: (L, M)
+        dw_lm = dw_lm - dw_lm.mean(dim=1, keepdim=True)
+
         # (L, M) -> (M, L)
-        dw = self.delta(self.label_feats).transpose(0, 1).contiguous()
-        return dw
+        return dw_lm.transpose(0, 1).contiguous()
 
     def effective_w(self) -> torch.Tensor:
         """
@@ -192,7 +215,7 @@ class PerLabelFreqGatedEnsemble(nn.Module):
             w_eff: (M, L)
         """
         dw = self.delta_w()
-        return self.base_w + self.alpha * dw
+        return self.base_w + self.alpha() * dw
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
@@ -228,7 +251,7 @@ def _print_diagnostics(
     with torch.no_grad():
         base_w = model.base_w.detach().cpu()  # (M, L)
         dw = model.delta_w().detach().cpu()  # (M, L)
-        alpha = float(model.alpha.detach().cpu())
+        alpha = float(model.alpha().detach().cpu())
         delta_scaled = alpha * dw
         w_eff = base_w + delta_scaled
 
@@ -243,7 +266,7 @@ def _print_diagnostics(
         return t.abs().mean(dim=1).numpy()
 
     print("\n=== Diagnostics: frequency-gated per-label weights ===")
-    print(f"alpha = {alpha:.6f}")
+    print(f"alpha = {alpha:.6f} (alpha_max={model.alpha_max:.6f})")
     print(
         "RMS | "
         f"base_w={_rms(base_w):.6f} | "
@@ -349,6 +372,7 @@ def main():
         label_feats=label_feats,
         hidden=16,
         alpha_init=0.1,
+        alpha_max=0.5,
     ).to(DEVICE)
 
     optimizer = optim.AdamW(
@@ -440,7 +464,7 @@ def main():
             f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
             f"f1@5={_dt(t_f1):.3f}s | "
             f"loss={loss.item():.6f} | "
-            f"alpha={float(model.alpha.detach().cpu()):.4f} | "
+            f"alpha={float(model.alpha().detach().cpu()):.4f} | "
             f"total={epoch_dt:.3f}s"
         )
 
