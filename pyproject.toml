@@ -9,13 +9,14 @@ dependencies = [
     "numpy",
     "scipy",
     "torch",
+    "torchvision",
 ]
 
 
 [[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-packages = ["torch"]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+packages = ["torch", "torchvision"]
 
 [dependency-groups]
 dev = [
