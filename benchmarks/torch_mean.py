@@ -22,6 +22,30 @@ K_VALUES = (10, 1000)
 PATIENCE = 2
 MIN_EPOCHS = 2
 
+EVAL_BATCH_SIZE = 128
+
+
+def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
+    """
+    Run model forward pass over a CPU tensor in batches, moving only minibatches
+    to DEVICE. Returns a CPU tensor of outputs.
+    """
+    model.eval()
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x_cpu),
+        batch_size=EVAL_BATCH_SIZE,
+        shuffle=False,
+        pin_memory=(DEVICE.type == "cuda"),
+    )
+
+    outs: list[torch.Tensor] = []
+    with torch.no_grad():
+        for (xb,) in loader:
+            xb = xb.to(DEVICE, non_blocking=True)
+            out = model(xb)
+            outs.append(out.detach().cpu())
+    return torch.cat(outs, dim=0)
+
 
 def main():
     scoreboard_path = Path("SCOREBOARD.md")
@@ -67,7 +91,10 @@ def main():
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
     train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=BATCH_SIZE, shuffle=True
+        train_ds,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        pin_memory=(DEVICE.type == "cuda"),
     )
 
     # Early stopping: select best epoch by TRAIN NDCG@1000 (no test leakage)
@@ -83,8 +110,8 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         for xb, yb in train_loader:
-            xb = xb.to(DEVICE)
-            yb = yb.to(DEVICE)
+            xb = xb.to(DEVICE, non_blocking=True)
+            yb = yb.to(DEVICE, non_blocking=True)
 
             optimizer.zero_grad()
             output_train = model(xb)
@@ -92,22 +119,16 @@ def main():
             loss.backward()
             optimizer.step()
 
-        model.eval()
-
-        # --- Train evaluation ---
-        with torch.no_grad():
-            full_train_output = model(X_train.to(DEVICE))
-
+        # --- Train evaluation (batched; no full-tensor .to(DEVICE)) ---
+        full_train_output = _predict_in_batches(model, X_train)
         y_train_pred_csr = tensor_to_csr(full_train_output)
         train_metrics = {}
         for k in K_VALUES:
             ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
             train_metrics[f"ndcg@{k}"] = ndcg
 
-        # --- Test evaluation (computed for reporting only; NOT used for selection) ---
-        with torch.no_grad():
-            output_test = model(X_test.to(DEVICE))
-
+        # --- Test evaluation (batched; reporting only) ---
+        output_test = _predict_in_batches(model, X_test)
         y_test_pred_csr = tensor_to_csr(output_test)
         test_metrics = {}
         for k in K_VALUES:
