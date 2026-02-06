@@ -155,6 +155,37 @@ Practical takeaway:
 > If using the applied-correction regularizer, `lambda_delta` must be increased by roughly `1/alpha^2`.  
 > With `alpha ≈ 0.1`, that means `lambda_delta` should be on the order of **1e-2..1e-1** (often around **0.1**) to match the previous effective strength.
 
+#### Update: confirmed — larger λ restores the “small nudge” regime and improves metrics
+After expanding `lambda_delta` into the correct range for the applied-correction regularizer, the model returned to stable training and small, meaningful corrections.
+
+Runs (all with `alpha_max=0.5`, early-stop by train “mix” metric, best epoch = 4):
+
+- `lambda_delta=0.03`
+  - Test NDCG@10 = **0.709680**
+  - Test NDCG@1000 = **0.815125**
+  - Test F1@5 = **0.541443**
+  - Diagnostics: `alpha ≈ 0.097`, RMS(`alpha * delta_w`) ≈ **0.001678**
+
+- `lambda_delta=0.10`
+  - Test NDCG@10 = **0.709472**
+  - Test NDCG@1000 = **0.814974**
+  - Test F1@5 = **0.539648**
+  - Diagnostics: RMS(`alpha * delta_w`) ≈ **0.000837** (very close to the earlier best run’s ~0.00078)
+
+- `lambda_delta=0.30`
+  - Test NDCG@10 = **0.709147**
+  - Test NDCG@1000 = **0.815096**
+  - Test F1@5 = **0.539909**
+  - Diagnostics: RMS(`alpha * delta_w`) ≈ **0.000266** (gate nearly inactive)
+
+Interpretation:
+- The best results occur when the frequency gate is a **small-but-nonzero** correction.
+- Too-small `lambda_delta` (earlier sweep) makes the gate a strong router and hurts generalization.
+- Too-large `lambda_delta` makes the gate nearly inactive and removes most of the benefit.
+
+Practical takeaway:
+> For applied-correction regularization, the useful `lambda_delta` range is roughly **0.03–0.1** (at `alpha_max=0.5`), where the model learns a stable, small correction and improves ranking.
+
 ---
 
 ### 3. Simple mean / mean+bias ensembles are strong baselines
