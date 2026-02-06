@@ -90,6 +90,14 @@ def _label_freq_features(y_train_true_csr) -> torch.Tensor:
     return torch.from_numpy(feats).float()  # CPU
 
 
+def _label_counts(y_train_true_csr) -> np.ndarray:
+    """
+    Returns:
+        counts: np.ndarray of shape (L,) float32
+    """
+    return np.asarray(y_train_true_csr.sum(axis=0)).reshape(-1).astype(np.float32)
+
+
 def _sync_if_cuda() -> None:
     if DEVICE.type == "cuda":
         torch.cuda.synchronize()
@@ -178,6 +186,14 @@ class PerLabelFreqGatedEnsemble(nn.Module):
         dw = self.delta(self.label_feats).transpose(0, 1).contiguous()
         return dw
 
+    def effective_w(self) -> torch.Tensor:
+        """
+        Returns:
+            w_eff: (M, L)
+        """
+        dw = self.delta_w()
+        return self.base_w + self.alpha * dw
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
             raise ValueError(f"Expected (batch, n_models, n_labels), got {x.shape}")
@@ -186,11 +202,99 @@ class PerLabelFreqGatedEnsemble(nn.Module):
                 f"Expected n_models={self.n_models}, n_labels={self.n_labels}, got {x.shape}"
             )
 
-        dw = self.delta_w()  # (M, L)
-        w_eff = self.base_w + self.alpha * dw  # (M, L)
-
+        w_eff = self.effective_w()  # (M, L)
         out = (x * w_eff.unsqueeze(0)).sum(dim=1) + self.bias
         return out  # raw logits
+
+
+def _print_diagnostics(
+    model: PerLabelFreqGatedEnsemble,
+    label_counts: np.ndarray,
+    model_names: list[str] | None = None,
+) -> None:
+    """
+    Print diagnostics to understand what the frequency module is doing.
+
+    Args:
+        model: trained model (already on DEVICE)
+        label_counts: (L,) counts from training ground truth
+        model_names: optional list of base model names in order
+    """
+    if model_names is None:
+        model_names = [f"m{i}" for i in range(model.n_models)]
+    if len(model_names) != model.n_models:
+        model_names = [f"m{i}" for i in range(model.n_models)]
+
+    with torch.no_grad():
+        base_w = model.base_w.detach().cpu()  # (M, L)
+        dw = model.delta_w().detach().cpu()  # (M, L)
+        alpha = float(model.alpha.detach().cpu())
+        delta_scaled = alpha * dw
+        w_eff = base_w + delta_scaled
+
+    def _rms(t: torch.Tensor) -> float:
+        return float(torch.sqrt(torch.mean(t * t)).item())
+
+    def _mean_per_model(t: torch.Tensor) -> np.ndarray:
+        # t: (M, L) -> (M,)
+        return t.mean(dim=1).numpy()
+
+    def _mean_abs_per_model(t: torch.Tensor) -> np.ndarray:
+        return t.abs().mean(dim=1).numpy()
+
+    print("\n=== Diagnostics: frequency-gated per-label weights ===")
+    print(f"alpha = {alpha:.6f}")
+    print(
+        "RMS | "
+        f"base_w={_rms(base_w):.6f} | "
+        f"delta_w={_rms(dw):.6f} | "
+        f"alpha*delta_w={_rms(delta_scaled):.6f} | "
+        f"w_eff={_rms(w_eff):.6f}"
+    )
+
+    base_mean = _mean_per_model(base_w)
+    eff_mean = _mean_per_model(w_eff)
+    delta_abs_mean = _mean_abs_per_model(delta_scaled)
+
+    print("\nPer-model mean weights (averaged over labels):")
+    for i, name in enumerate(model_names):
+        print(
+            f"  {name:8s} | mean(base_w)={base_mean[i]: .6f} | "
+            f"mean(w_eff)={eff_mean[i]: .6f} | "
+            f"mean(|alpha*delta_w|)={delta_abs_mean[i]: .6f}"
+        )
+
+    # Frequency bins
+    counts = label_counts.astype(np.float32)
+    bins: list[tuple[str, np.ndarray]] = [
+        ("count==0", np.where(counts == 0)[0]),
+        ("count==1", np.where(counts == 1)[0]),
+        ("count 2-5", np.where((counts >= 2) & (counts <= 5))[0]),
+        ("count 6-20", np.where((counts >= 6) & (counts <= 20))[0]),
+        ("count 21-100", np.where((counts >= 21) & (counts <= 100))[0]),
+        ("count>=101", np.where(counts >= 101)[0]),
+    ]
+
+    print("\nPer-bin mean weights by label frequency:")
+    print("  (values are means over labels in the bin; weights are per-model)")
+    for label, idx in bins:
+        if idx.size == 0:
+            print(f"  {label:11s} | n_labels=0")
+            continue
+
+        idx_t = torch.from_numpy(idx.astype(np.int64))
+        base_bin = base_w.index_select(dim=1, index=idx_t).mean(dim=1).numpy()
+        eff_bin = w_eff.index_select(dim=1, index=idx_t).mean(dim=1).numpy()
+        delta_bin = delta_scaled.index_select(dim=1, index=idx_t).mean(dim=1).numpy()
+
+        parts = []
+        for i, name in enumerate(model_names):
+            parts.append(
+                f"{name}: eff={eff_bin[i]: .4f} (base={base_bin[i]: .4f}, d={delta_bin[i]: .4f})"
+            )
+        print(f"  {label:11s} | n_labels={idx.size:5d} | " + " | ".join(parts))
+
+    print("=== End diagnostics ===\n")
 
 
 def main():
@@ -214,6 +318,7 @@ def main():
 
     # Label frequency features (CPU)
     label_feats = _label_freq_features(y_train_true)
+    label_counts = _label_counts(y_train_true)
 
     # Fixed random subset of train rows for per-epoch early stopping metric
     rng = np.random.default_rng(EARLY_STOP_SEED)
@@ -391,6 +496,13 @@ def main():
         f"f1@5={best_test_metrics['f1@5']:.6f} | "
         f"epoch={best_epoch}"
     )
+
+    _print_diagnostics(
+        model=model,
+        label_counts=label_counts,
+        model_names=["bonsai", "fasttext", "mllm"],
+    )
+
     print("\nSaved best result to SCOREBOARD.md")
 
 
