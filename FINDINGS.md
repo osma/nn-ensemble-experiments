@@ -186,6 +186,48 @@ Interpretation:
 Practical takeaway:
 > For applied-correction regularization, the useful `lambda_delta` range is roughly **0.03–0.1** (at `alpha_max=0.5`), where the model learns a stable, small correction and improves ranking.
 
+#### Update: full sweep confirms λ scale, typical correction magnitude, and that alpha_max is not binding
+A full grid sweep was run:
+
+- `alpha_max ∈ {0.25, 0.5, 0.75}`
+- `lambda_delta ∈ {0.01, 0.02, 0.03, 0.05, 0.07, 0.10, 0.15, 0.20, 0.30}`
+- Early stopping selection metric: train-subset `"mix"` = `0.7*NDCG@10 + 0.3*NDCG@1000`
+
+Key observations from the sweep:
+
+1) **The corrected λ range is validated**
+- Strong results consistently occur for `lambda_delta` in the **~0.02–0.10** range.
+- `lambda_delta=0.01` tends to produce a noticeably larger correction (see below) without improving metrics.
+
+2) **Best runs correspond to a small applied correction**
+The best-performing configurations typically have:
+
+- `alpha(best) ≈ 0.096–0.099`
+- `RMS(alpha * delta_w)(best) ≈ 3e-4 .. 1.5e-3`
+
+When `RMS(alpha * delta_w)` is larger (e.g. `~0.004–0.006` at `lambda_delta=0.01`), the gate is “stronger than needed” and does not improve results.
+
+3) **alpha_max is not the limiting factor in this regime**
+Across the sweep, `alpha(best)` stays near ~0.097 regardless of `alpha_max` being 0.25, 0.5, or 0.75.  
+This indicates:
+- `alpha_max` is not binding (the learned alpha is well below the cap),
+- `lambda_delta` is the primary knob controlling correction strength.
+
+4) **The early-stop selection metric is only weakly discriminative among near-ties**
+Many configurations have very similar train-subset `"mix"` scores but slightly different test outcomes.  
+The selection metric is good enough to find strong configs, but it is not a sharp discriminator once you are in the “small nudge” regime.
+
+Example sweep-selected config (by train `"mix"`):
+- `alpha_max=0.5, lambda_delta=0.05` (best epoch = 4)
+- Test NDCG@10 = **0.709685**
+- Test NDCG@1000 = **0.815720**
+- Test F1@5 = **0.540462**
+- `RMS(alpha * delta_w)(best) ≈ 0.00124`
+
+Practical takeaway:
+> Once λ is in the correct range, the model is robust: many nearby settings work.  
+> The main goal is to keep `RMS(alpha * delta_w)` in the “small nudge” regime (roughly `1e-4..1e-3` order of magnitude), not to chase a single magic λ.
+
 ---
 
 ### 3. Simple mean / mean+bias ensembles are strong baselines
