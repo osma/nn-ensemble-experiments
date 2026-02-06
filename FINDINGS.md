@@ -100,7 +100,7 @@ A follow-up refactor implemented two constraints:
 
 - **Zero-mean delta across models per label**  
   `mean_m delta_w[m,l] = 0` for every label `l`  
-  → the frequency module can only **redistribute trust** between base models, not scale all of them together.
+  → the frequency module can only **redistribute trust** between base models, not scale all models together.
 
 - **Bounded, nonnegative alpha**  
   `alpha = alpha_max * sigmoid(alpha_raw)`  
@@ -406,6 +406,37 @@ Key lesson:
 As a result:
 - Fixed transforms (`sqrt`, `log1p`, fixed power laws) are preferred
 - Learned calibration parameters coupled to BCE are avoided
+
+---
+
+### 8. New experiment: global+delta per-label weights with frequency-conditioned shrinkage (hierarchical prior)
+**Model:** `torch_per_label` (refactor)  
+**Mechanism:** decompose per-label weights into a shared global mixture plus per-label deviations:
+
+```
+w_eff[m,l] = w_global[m] + w_delta[m,l]
+logit[l] = sum_m w_eff[m,l] * x[m,l] + b[l]
+```
+
+Add a frequency-weighted L2 penalty on the per-label deviations:
+
+```
+loss = BCEWithLogitsLoss + lambda_delta * mean_l g(count[l]) * ||w_delta[:,l]||^2
+```
+
+where `g(count)` is larger for rare labels (e.g. `1/sqrt(count+1)`).
+
+Observed outcome so far:
+- A first run with `lambda_delta=1e-4` and `freq_mode=inv_sqrt` reproduced the baseline `torch_per_label` metrics (no clear gain yet).
+- Importantly, the refactor did **not** destabilize training or collapse NDCG.
+
+Interpretation:
+- This is a “safe” way to inject a frequency-aware prior: rare labels are encouraged to stay close to a learned global mixture, while frequent labels can deviate more.
+- The initial `lambda_delta` value is likely too small to materially affect the learned `w_delta` (M×L parameters).
+
+Practical takeaway:
+> If this approach helps, it will likely require a sweep over `lambda_delta` (e.g. `1e-4 → 1e-2`) and possibly trying `freq_mode=inv_log`.  
+> The main value is improved stability/priors for rare labels without adding cross-label interactions.
 
 ---
 
