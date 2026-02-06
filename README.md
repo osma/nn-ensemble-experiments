@@ -94,10 +94,44 @@ This project uses **uv** for Python version and dependency management.
 ### Requirements
 - `uv` installed: https://docs.astral.sh/uv/
 
-### Setup
+### Setup (non-torch)
+If you only want to run the non-torch baselines (e.g. `mean`, `mean_weighted`):
+
 ```bash
 uv python install
 uv sync
+```
+
+### Installing PyTorch (CPU vs CUDA)
+
+PyTorch is an **optional dependency** in this repo. You must select exactly one
+of the following extras depending on your environment:
+
+- `torch-cpu`  → CPU-only wheels from `https://download.pytorch.org/whl/cpu`
+- `torch-cu126` → CUDA 12.6 wheels from `https://download.pytorch.org/whl/cu126`
+- `torch-cu130` → CUDA 13.0 wheels from `https://download.pytorch.org/whl/cu130`
+
+Install one of them like this:
+
+```bash
+# CPU-only
+uv sync --extra torch-cpu
+
+# CUDA 12.6
+uv sync --extra torch-cu126
+
+# CUDA 13.0
+uv sync --extra torch-cu130
+```
+
+If you are unsure which CUDA version you need, start with `torch-cpu` (it will
+work everywhere, just slower), or match the extra to your installed NVIDIA
+driver/CUDA runtime.
+
+To verify CUDA is working after installing a CUDA wheel:
+
+```bash
+uv run python benchmarks/cuda_smoketest.py
 ```
 
 ### Running tools
