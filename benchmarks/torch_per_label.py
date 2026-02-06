@@ -2,6 +2,7 @@
 # Purpose: Best-performing per-label linear ensemble trained with BCE on raw logits.
 from pathlib import Path
 import sys
+import time
 
 # Allow running as a script: `uv run benchmarks/torch_per_label.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -97,6 +98,27 @@ def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
     return csr_matrix(t.detach().cpu().numpy())
 
 
+def _sync_if_cuda() -> None:
+    if DEVICE.type == "cuda":
+        torch.cuda.synchronize()
+
+
+class _Timer:
+    def __init__(self):
+        self.t0: float | None = None
+        self.dt: float | None = None
+
+    def __enter__(self):
+        _sync_if_cuda()
+        self.t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _sync_if_cuda()
+        assert self.t0 is not None
+        self.dt = time.perf_counter() - self.t0
+
+
 def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
     model.eval()
     loader = torch.utils.data.DataLoader(
@@ -186,35 +208,71 @@ def main():
     epochs_no_improve = 0
 
     for epoch in range(1, EPOCHS + 1):
-        model.train()
-        for xb, yb in train_loader:
-            xb = xb.to(DEVICE, non_blocking=True)
-            yb = yb.to(DEVICE, non_blocking=True)
+        epoch_t0 = time.perf_counter()
 
-            optimizer.zero_grad()
-            logits = model(xb)
-            loss = criterion(logits, yb)
-            loss.backward()
-            optimizer.step()
+        model.train()
+        with _Timer() as t_train_step:
+            for xb, yb in train_loader:
+                xb = xb.to(DEVICE, non_blocking=True)
+                yb = yb.to(DEVICE, non_blocking=True)
+
+                optimizer.zero_grad()
+                logits = model(xb)
+                loss = criterion(logits, yb)
+                loss.backward()
+                optimizer.step()
 
         # --- Train evaluation (batched; no full-tensor .to(DEVICE)) ---
-        train_scores = _predict_in_batches(model, X_train)
-        y_train_pred_csr = tensor_to_csr(train_scores)
+        with _Timer() as t_pred_train:
+            train_scores = _predict_in_batches(model, X_train)
+
+        with _Timer() as t_csr_train:
+            y_train_pred_csr = tensor_to_csr(train_scores)
+
         train_metrics = {}
+        t_ndcg_train: dict[int, float] = {}
         for k in K_VALUES:
-            ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
+            with _Timer() as t:
+                ndcg, n_used_train = ndcg_at_k(y_train_true, y_train_pred_csr, k=k)
+            assert t.dt is not None
+            t_ndcg_train[k] = t.dt
             train_metrics[f"ndcg@{k}"] = ndcg
 
         # --- Test evaluation (batched; reporting only) ---
-        test_scores = _predict_in_batches(model, X_test)
-        y_test_pred_csr = tensor_to_csr(test_scores)
+        with _Timer() as t_pred_test:
+            test_scores = _predict_in_batches(model, X_test)
+
+        with _Timer() as t_csr_test:
+            y_test_pred_csr = tensor_to_csr(test_scores)
+
         test_metrics = {}
+        t_ndcg_test: dict[int, float] = {}
         for k in K_VALUES:
-            ndcg, n_used_test = ndcg_at_k(y_test_true, y_test_pred_csr, k=k)
+            with _Timer() as t:
+                ndcg, n_used_test = ndcg_at_k(y_test_true, y_test_pred_csr, k=k)
+            assert t.dt is not None
+            t_ndcg_test[k] = t.dt
             test_metrics[f"ndcg@{k}"] = ndcg
 
-        f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
+        with _Timer() as t_f1:
+            f1, _ = f1_at_k(y_test_true, y_test_pred_csr, k=5)
         test_metrics["f1@5"] = f1
+
+        epoch_dt = time.perf_counter() - epoch_t0
+
+        def _dt(timer: _Timer) -> float:
+            return float(timer.dt) if timer.dt is not None else 0.0
+
+        print(
+            f"Epoch {epoch:02d} timing | "
+            f"train_step={_dt(t_train_step):.3f}s | "
+            f"pred_train={_dt(t_pred_train):.3f}s | csr_train={_dt(t_csr_train):.3f}s | "
+            f"ndcg_train@10={t_ndcg_train.get(10, 0.0):.3f}s ndcg_train@1000={t_ndcg_train.get(1000, 0.0):.3f}s | "
+            f"pred_test={_dt(t_pred_test):.3f}s | csr_test={_dt(t_csr_test):.3f}s | "
+            f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
+            f"f1@5={_dt(t_f1):.3f}s | "
+            f"total={epoch_dt:.3f}s"
+        )
 
         current = train_metrics["ndcg@1000"]
         if current > best_metric:
