@@ -4,6 +4,7 @@ import sys
 # Allow running as a script: `uv run benchmarks/torch_mean.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -27,7 +28,9 @@ K_VALUES = (10, 1000)
 PATIENCE = 2
 MIN_EPOCHS = 2
 
-EVAL_BATCH_SIZE = 128
+EVAL_BATCH_SIZE = 512
+EARLY_STOP_EVAL_ROWS = 512
+EARLY_STOP_SEED = 1337
 
 
 def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
@@ -70,6 +73,14 @@ def main():
 
     # Keep Y_train on CPU (requested).
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
+
+    # Fixed random subset of train rows for per-epoch early stopping metric
+    rng = np.random.default_rng(EARLY_STOP_SEED)
+    n_train = X_train.shape[0]
+    n_eval = min(EARLY_STOP_EVAL_ROWS, n_train)
+    train_eval_idx = rng.choice(n_train, size=n_eval, replace=False)
+    X_train_eval = X_train[train_eval_idx]
+    y_train_true_eval = y_train_true[train_eval_idx]
 
     print("Loading test data...")
 
@@ -124,13 +135,13 @@ def main():
             loss.backward()
             optimizer.step()
 
-        # --- Train evaluation (batched; no CSR conversion) ---
-        full_train_output = _predict_in_batches(model, X_train)
-        train_metrics = {}
-        for k in K_VALUES:
-            ndcg, n_used_train = ndcg_at_k_dense(y_train_true, full_train_output, k=k)
-            train_metrics[f"ndcg@{k}"] = ndcg
+        # --- Train evaluation for early stopping (subset only) ---
+        train_eval_output = _predict_in_batches(model, X_train_eval)
+        train_ndcg1000, n_used_train = ndcg_at_k_dense(
+            y_train_true_eval, train_eval_output, k=1000
+        )
 
+        # --- Full train metrics (only when we have a new best) ---
         # --- Test evaluation (batched; no CSR conversion) ---
         output_test = _predict_in_batches(model, X_test)
         test_metrics = {}
@@ -141,14 +152,23 @@ def main():
         f1, _ = f1_at_k_dense(y_test_true, output_test, k=5)
         test_metrics["f1@5"] = f1
 
-        current = train_metrics["ndcg@1000"]
+        current = train_ndcg1000
         if current > best_metric:
             best_metric = current
             best_epoch = epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-            best_train_metrics = train_metrics.copy()
+
+            # Compute full train metrics only for the best epoch snapshot
+            full_train_output = _predict_in_batches(model, X_train)
+            best_train_metrics = {}
+            for k in K_VALUES:
+                ndcg, n_used_train_full = ndcg_at_k_dense(
+                    y_train_true, full_train_output, k=k
+                )
+                best_train_metrics[f"ndcg@{k}"] = ndcg
+            best_n_used_train = n_used_train_full
+
             best_test_metrics = test_metrics.copy()
-            best_n_used_train = n_used_train
             best_n_used_test = n_used_test
             epochs_no_improve = 0
         else:

@@ -7,6 +7,7 @@ import time
 # Allow running as a script: `uv run benchmarks/torch_per_label.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -91,7 +92,9 @@ K_VALUES = (10, 1000)
 PATIENCE = 2
 MIN_EPOCHS = 2
 
-EVAL_BATCH_SIZE = 128
+EVAL_BATCH_SIZE = 512
+EARLY_STOP_EVAL_ROWS = 512
+EARLY_STOP_SEED = 1337
 
 
 def csr_to_dense_tensor(csr):
@@ -161,6 +164,14 @@ def main():
     # Keep Y_train on CPU (requested).
     Y_train = csr_to_dense_tensor(y_train_true)
 
+    # Fixed random subset of train rows for per-epoch early stopping metric
+    rng = np.random.default_rng(EARLY_STOP_SEED)
+    n_train = X_train.shape[0]
+    n_eval = min(EARLY_STOP_EVAL_ROWS, n_train)
+    train_eval_idx = rng.choice(n_train, size=n_eval, replace=False)
+    X_train_eval = X_train[train_eval_idx]
+    y_train_true_eval = y_train_true[train_eval_idx]
+
     print("Loading test data...")
 
     # Keep y_test_true / Y_test on CPU (requested).
@@ -227,20 +238,17 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-        # --- Train evaluation (batched; no CSR conversion) ---
+        # --- Train evaluation for early stopping (subset only) ---
         with _Timer() as t_pred_train:
-            train_scores = _predict_in_batches(model, X_train)
+            train_scores_eval = _predict_in_batches(model, X_train_eval)
 
-        train_metrics = {}
         t_ndcg_train: dict[int, float] = {}
-        for k in K_VALUES:
-            with _Timer() as t:
-                ndcg, n_used_train = ndcg_at_k_dense(
-                    y_train_true, train_scores, k=k
-                )
-            assert t.dt is not None
-            t_ndcg_train[k] = t.dt
-            train_metrics[f"ndcg@{k}"] = ndcg
+        with _Timer() as t:
+            train_ndcg1000, n_used_train = ndcg_at_k_dense(
+                y_train_true_eval, train_scores_eval, k=1000
+            )
+        assert t.dt is not None
+        t_ndcg_train[1000] = t.dt
 
         # --- Test evaluation (batched; no CSR conversion) ---
         with _Timer() as t_pred_test:
@@ -250,9 +258,7 @@ def main():
         t_ndcg_test: dict[int, float] = {}
         for k in K_VALUES:
             with _Timer() as t:
-                ndcg, n_used_test = ndcg_at_k_dense(
-                    y_test_true, test_scores, k=k
-                )
+                ndcg, n_used_test = ndcg_at_k_dense(y_test_true, test_scores, k=k)
             assert t.dt is not None
             t_ndcg_test[k] = t.dt
             test_metrics[f"ndcg@{k}"] = ndcg
@@ -270,21 +276,30 @@ def main():
             f"Epoch {epoch:02d} timing | "
             f"train_step={_dt(t_train_step):.3f}s | "
             f"pred_train={_dt(t_pred_train):.3f}s | "
-            f"ndcg_train@10={t_ndcg_train.get(10, 0.0):.3f}s ndcg_train@1000={t_ndcg_train.get(1000, 0.0):.3f}s | "
+            f"ndcg_train@1000={t_ndcg_train.get(1000, 0.0):.3f}s | "
             f"pred_test={_dt(t_pred_test):.3f}s | "
             f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
             f"f1@5={_dt(t_f1):.3f}s | "
             f"total={epoch_dt:.3f}s"
         )
 
-        current = train_metrics["ndcg@1000"]
+        current = train_ndcg1000
         if current > best_metric:
             best_metric = current
             best_epoch = epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-            best_train_metrics = train_metrics.copy()
+
+            # Compute full train metrics only for the best epoch snapshot
+            full_train_scores = _predict_in_batches(model, X_train)
+            best_train_metrics = {}
+            for k in K_VALUES:
+                ndcg, n_used_train_full = ndcg_at_k_dense(
+                    y_train_true, full_train_scores, k=k
+                )
+                best_train_metrics[f"ndcg@{k}"] = ndcg
+            best_n_used_train = n_used_train_full
+
             best_test_metrics = test_metrics.copy()
-            best_n_used_train = n_used_train
             best_n_used_test = n_used_test
             epochs_no_improve = 0
         else:
