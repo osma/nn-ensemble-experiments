@@ -8,9 +8,28 @@ dependencies = [
     "markupsafe==2.1.5",
     "numpy",
     "scipy",
+]
+
+[project.optional-dependencies]
+torch-cpu = [
+    "torch",
+]
+torch-cu126 = [
+    "torch",
+]
+torch-cu130 = [
     "torch",
 ]
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+packages = ["torch"]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+packages = ["torch"]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
