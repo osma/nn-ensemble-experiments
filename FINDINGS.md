@@ -59,7 +59,7 @@ Key implementation details that mattered:
 
 Observed outcome (from the current `SCOREBOARD.md`):
 - `torch_per_label_freq_gate` is **#1 on Test NDCG@10** and **#1 on Test NDCG@1000**
-- It is slightly behind `torch_per_label` on **Test F1@5**
+- It is essentially tied with `torch_per_label` on **Test F1@5** (slightly lower in the current scoreboard)
 
 Interpretation:
 - Label frequency contains useful signal for ranking, but it must be injected in a way that does not destabilize the strong per-label baseline.
@@ -94,6 +94,37 @@ Practical takeaway:
 
 This also suggests a future experiment:
 - If we want to force “trust redistribution” rather than “shrink everyone”, constrain `delta_w` to be **zero-mean across models per label** (so it can only reallocate weight between models, not scale all of them together).
+
+#### Update: forcing trust redistribution + bounded alpha still works (and clarifies behavior)
+A follow-up refactor implemented two constraints:
+
+- **Zero-mean delta across models per label**  
+  `mean_m delta_w[m,l] = 0` for every label `l`  
+  → the frequency module can only **redistribute trust** between base models, not scale all of them together.
+
+- **Bounded, nonnegative alpha**  
+  `alpha = alpha_max * sigmoid(alpha_raw)`  
+  → prevents runaway scaling and keeps the frequency effect stable.
+
+Observed outcome:
+- The model **still** achieves the best NDCG metrics in the current scoreboard:
+  - `torch_per_label_freq_gate`: Test NDCG@10 **0.709273**, Test NDCG@1000 **0.815026**
+  - `torch_per_label`: Test NDCG@10 **0.708496**, Test NDCG@1000 **0.814356**
+- Test F1@5 remains essentially tied (freq-gated is slightly lower in the current scoreboard).
+
+What the new diagnostics show:
+- The frequency module becomes an even smaller “nudge”:
+  - Example run: `alpha ≈ 0.108`
+  - RMS(`alpha * delta_w`) ≈ **0.000675** vs RMS(`base_w`) ≈ **0.327**
+- The per-bin deltas now clearly sum to ~0 across models (up to rounding), confirming the redistribution constraint is active.
+- The learned pattern is mostly:
+  - **shift weight away from mLLM** for labels that appear in training (especially mid/high-frequency bins),
+  - **slightly increase fastText (and sometimes Bonsai)** in those bins,
+  - **near-zero changes for zero-shot labels** (`count==0`), i.e. the model does not strongly learn “mLLM for zero-shot” in this setup.
+
+Practical takeaway:
+> The best gains so far come from **very small, frequency-conditioned trust redistribution**, not large gating.  
+> The model is using frequency to make subtle, label-regime-specific adjustments that improve ranking.
 
 ---
 
