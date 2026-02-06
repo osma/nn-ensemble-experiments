@@ -126,6 +126,35 @@ Practical takeaway:
 > The best gains so far come from **very small, frequency-conditioned trust redistribution**, not large gating.  
 > The model is using frequency to make subtle, label-regime-specific adjustments that improve ranking.
 
+#### Update: regularizing the *applied* correction requires much larger λ (otherwise the gate becomes too strong)
+A later refactor changed the regularizer from penalizing the raw residual to penalizing the *applied* correction:
+
+Old:
+```
+loss = BCE + λ * mean(delta_w^2)
+```
+
+New:
+```
+loss = BCE + λ * mean((alpha * delta_w)^2)
+```
+
+This is conceptually cleaner (it penalizes what is actually applied), but it has an important practical consequence:
+
+- In typical runs, `alpha ≈ 0.10`, so `alpha^2 ≈ 0.01`.
+- Therefore, for the same `λ`, the new regularizer is effectively ~**100× weaker** on `delta_w`.
+
+Observed behavior when keeping the old `λ` scale (e.g. `1e-4..1e-3`):
+- `RMS(alpha * delta_w)` jumped from ~**7.8e-4** (small nudge) to **1e-2..1e-1** (large correction).
+- The frequency module stopped being a “safe residual” and became a strong frequency-conditioned router.
+- Diagnostics showed large shifts toward **fastText** and away from **mLLM** for labels seen in training.
+- Training became unstable quickly: train-subset NDCG dropped sharply after epoch 1, so early stopping consistently selected **epoch 1**.
+- A built-in sweep over `(alpha_max ∈ {0.5, 1.0, 2.0}, lambda_delta ∈ {1e-4, 3e-4, 1e-3})` did **not** recover the previous small-residual regime and did **not** beat the earlier best run.
+
+Practical takeaway:
+> If using the applied-correction regularizer, `lambda_delta` must be increased by roughly `1/alpha^2`.  
+> With `alpha ≈ 0.1`, that means `lambda_delta` should be on the order of **1e-2..1e-1** (often around **0.1**) to match the previous effective strength.
+
 ---
 
 ### 3. Simple mean / mean+bias ensembles are strong baselines
