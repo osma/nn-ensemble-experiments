@@ -1,5 +1,5 @@
 # STATUS: EXPERIMENTAL
-# Purpose: Per-label ensemble where per-model trust is gated by label frequency features.
+# Purpose: Per-label ensemble where per-model trust is adjusted using label frequency features.
 from pathlib import Path
 import sys
 import time
@@ -32,6 +32,10 @@ MIN_EPOCHS = 2
 EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
+
+# Regularization strength for the frequency-based residual weight correction.
+# Higher -> pushes the model closer to plain torch_per_label behavior.
+LAMBDA_DELTA = 1e-3
 
 
 def csr_to_dense_tensor(csr):
@@ -66,13 +70,18 @@ def _label_freq_features(y_train_true_csr) -> torch.Tensor:
     """
     # counts per label (column sums)
     counts = np.asarray(y_train_true_csr.sum(axis=0)).reshape(-1).astype(np.float32)  # (L,)
+
     logf = np.log1p(counts)
     inv_logf = 1.0 / (1.0 + logf)
     is_zero = (counts == 0.0).astype(np.float32)
 
-    feats = np.stack([logf, inv_logf, is_zero], axis=1)  # (L, 3)
+    # Rare-label indicator (helps the model learn a distinct regime vs just "small logf")
+    is_rare_1 = (counts <= 1.0).astype(np.float32)
+    is_rare_5 = (counts <= 5.0).astype(np.float32)
 
-    # Normalize logf for stability; keep inv_logf and is_zero as-is.
+    feats = np.stack([logf, inv_logf, is_zero, is_rare_1, is_rare_5], axis=1)  # (L, 5)
+
+    # Normalize logf for stability; keep indicator features as-is.
     if feats.shape[0] > 0:
         mu = feats[:, 0].mean()
         sd = feats[:, 0].std() + 1e-6
@@ -104,15 +113,21 @@ class _Timer:
 
 class PerLabelFreqGatedEnsemble(nn.Module):
     """
-    Per-label weighted ensemble with bias, where per-model trust is gated by
+    Per-label weighted ensemble with bias, where per-model trust is adjusted by
     label-frequency features.
 
-    For each label l:
-        logit[l] = sum_m ( base_w[m,l] * gate(m,l) * x[m,l] ) + b[l]
+    This version uses a *residual* correction to the per-label weights:
 
-    - x is assumed to be log1p-scaled.
-    - gate(m,l) is produced from label frequency features via a small MLP.
-    - Returns raw logits (use BCEWithLogitsLoss).
+        w_eff[m,l] = base_w[m,l] + alpha * delta_w[m,l](freq[l])
+
+    This is intentionally more stable than multiplicative gating, because it
+    preserves the strong per-label baseline and lets frequency add a small,
+    regularized adjustment.
+
+    Input:
+        x: (batch, M, L) log1p-scaled base predictions
+    Output:
+        (batch, L) raw logits
     """
 
     def __init__(
@@ -121,6 +136,7 @@ class PerLabelFreqGatedEnsemble(nn.Module):
         n_labels: int,
         label_feats: torch.Tensor,
         hidden: int = 16,
+        alpha_init: float = 0.1,
     ):
         super().__init__()
         if label_feats.ndim != 2:
@@ -143,12 +159,24 @@ class PerLabelFreqGatedEnsemble(nn.Module):
         self.register_buffer("label_feats", label_feats)  # (L, F)
         fdim = int(label_feats.shape[1])
 
-        # Per-label gating network: (F) -> (M)
-        self.gate = nn.Sequential(
+        # Per-label residual generator: (F) -> (M)
+        self.delta = nn.Sequential(
             nn.Linear(fdim, hidden),
             nn.ReLU(),
             nn.Linear(hidden, n_models),
         )
+
+        # Small scaling for the residual; learnable but initialized small.
+        self.alpha = nn.Parameter(torch.tensor(float(alpha_init)))
+
+    def delta_w(self) -> torch.Tensor:
+        """
+        Returns:
+            delta_w: (M, L) residual weight correction derived from label_feats.
+        """
+        # (L, M) -> (M, L)
+        dw = self.delta(self.label_feats).transpose(0, 1).contiguous()
+        return dw
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
@@ -158,15 +186,11 @@ class PerLabelFreqGatedEnsemble(nn.Module):
                 f"Expected n_models={self.n_models}, n_labels={self.n_labels}, got {x.shape}"
             )
 
-        # Gates per label: (L, M) -> (M, L)
-        g = torch.sigmoid(self.gate(self.label_feats)).transpose(0, 1).contiguous()
+        dw = self.delta_w()  # (M, L)
+        w_eff = self.base_w + self.alpha * dw  # (M, L)
 
-        # Effective weights: (M, L)
-        w_eff = self.base_w * g
-
-        # Weighted sum over models
         out = (x * w_eff.unsqueeze(0)).sum(dim=1) + self.bias
-        return out
+        return out  # raw logits
 
 
 def main():
@@ -219,6 +243,7 @@ def main():
         n_labels=n_labels,
         label_feats=label_feats,
         hidden=16,
+        alpha_init=0.1,
     ).to(DEVICE)
 
     optimizer = optim.AdamW(
@@ -261,7 +286,12 @@ def main():
 
                 optimizer.zero_grad()
                 logits = model(xb)
-                loss = criterion(logits, yb)
+
+                # Regularize the frequency-based residual so it stays small unless useful.
+                dw = model.delta_w()
+                reg = (dw * dw).mean()
+
+                loss = criterion(logits, yb) + (LAMBDA_DELTA * reg)
                 loss.backward()
                 optimizer.step()
 
@@ -305,6 +335,7 @@ def main():
             f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
             f"f1@5={_dt(t_f1):.3f}s | "
             f"loss={loss.item():.6f} | "
+            f"alpha={float(model.alpha.detach().cpu()):.4f} | "
             f"total={epoch_dt:.3f}s"
         )
 
