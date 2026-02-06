@@ -35,6 +35,14 @@ EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
 
+# Early stopping selection metric (match torch_per_label_freq_gate.py).
+# - "ndcg10": select by train NDCG@10 on the fixed train subset
+# - "ndcg1000": select by train NDCG@1000 on the fixed train subset
+# - "mix": select by a weighted mix of both (recommended default)
+EARLY_STOP_METRIC = "mix"
+EARLY_STOP_MIX_W10 = 0.7
+EARLY_STOP_MIX_W1000 = 0.3
+
 
 def csr_to_dense_tensor(csr):
     x = torch.from_numpy(csr.toarray()).float()
@@ -61,6 +69,18 @@ def _freq_weight(counts: np.ndarray, mode: str) -> np.ndarray:
     if mode == "none":
         return np.ones_like(counts, dtype=np.float32)
     raise ValueError(f"Unknown freq mode: {mode!r}")
+
+
+def _early_stop_score(train_ndcg10: float, train_ndcg1000: float) -> float:
+    if EARLY_STOP_METRIC == "ndcg10":
+        return float(train_ndcg10)
+    if EARLY_STOP_METRIC == "ndcg1000":
+        return float(train_ndcg1000)
+    if EARLY_STOP_METRIC == "mix":
+        return float(
+            EARLY_STOP_MIX_W10 * train_ndcg10 + EARLY_STOP_MIX_W1000 * train_ndcg1000
+        )
+    raise ValueError(f"Unknown EARLY_STOP_METRIC={EARLY_STOP_METRIC!r}")
 
 
 class PerLabelWeightedEnsemble(nn.Module):
@@ -189,7 +209,7 @@ def _train_one(
 
     print("Starting training...")
     print(
-        f"Config | lambda_w={lambda_w:.6g} | lambda_b={lambda_b:.6g} | freq_mode={freq_mode}"
+        f"Config | lambda_w={lambda_w:.6g} | lambda_b={lambda_b:.6g} | freq_mode={freq_mode} | early_stop={EARLY_STOP_METRIC}"
     )
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
@@ -242,9 +262,12 @@ def _train_one(
             train_scores_eval = _predict_in_batches(model, X_train_eval)
 
         with _Timer() as t_ndcg_train:
+            train_ndcg10, _ = ndcg_at_k_dense(y_train_true_eval, train_scores_eval, k=10)
             train_ndcg1000, n_used_train = ndcg_at_k_dense(
                 y_train_true_eval, train_scores_eval, k=1000
             )
+
+        sel = _early_stop_score(train_ndcg10, train_ndcg1000)
 
         # --- Test evaluation ---
         with _Timer() as t_pred_test:
@@ -267,13 +290,13 @@ def _train_one(
             f"Epoch {epoch:02d} timing | "
             f"train_step={_dt(t_train_step):.3f}s | "
             f"pred_train={_dt(t_pred_train):.3f}s | "
-            f"ndcg_train@1000={train_ndcg1000:.6f} | "
+            f"ndcg_train@10={train_ndcg10:.6f} ndcg_train@1000={train_ndcg1000:.6f} sel={sel:.6f} | "
             f"pred_test={_dt(t_pred_test):.3f}s | "
             f"loss={loss.item():.6f} | "
             f"total={epoch_dt:.3f}s"
         )
 
-        current = train_ndcg1000
+        current = sel
         if current > best_metric:
             best_metric = current
             best_epoch = epoch
@@ -356,7 +379,7 @@ def main():
     parser.add_argument(
         "--sweep",
         action="store_true",
-        help="Run a small grid over (lambda_w, lambda_b, freq_mode) and keep the best by train NDCG@1000.",
+        help="Run a small grid over (lambda_w, lambda_b, freq_mode) and keep the best by the early-stop metric.",
     )
     parser.add_argument("--lambda-w", type=float, default=0.0, help="L2 strength for weights")
     parser.add_argument("--lambda-b", type=float, default=0.0, help="L2 strength for bias")
