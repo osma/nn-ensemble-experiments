@@ -44,7 +44,60 @@ Interpretation:
 
 ---
 
-### 2. Simple mean / mean+bias ensembles are strong baselines
+### 2. Frequency-aware per-label weights can improve ranking (small, controlled residuals)
+**Model:** `torch_per_label_freq_gate`  
+**Mechanism:** per-label weights are adjusted using label-frequency features via a **regularized residual**:
+
+```
+w_eff[m,l] = base_w[m,l] + alpha * delta_w[m,l](freq[l])
+```
+
+Key implementation details that mattered:
+- The frequency component is a **residual correction**, not a multiplicative gate.
+- The residual is **explicitly regularized** (L2 penalty on `delta_w`) so it stays small unless it helps.
+- Diagnostics were added to inspect what the frequency module actually learns.
+
+Observed outcome (from the current `SCOREBOARD.md`):
+- `torch_per_label_freq_gate` is **#1 on Test NDCG@10** and **#1 on Test NDCG@1000**
+- It is slightly behind `torch_per_label` on **Test F1@5**
+
+Interpretation:
+- Label frequency contains useful signal for ranking, but it must be injected in a way that does not destabilize the strong per-label baseline.
+- The residual + regularization approach behaves like a “safe prior”: it can help without rewriting the model.
+
+#### What the diagnostics revealed (important)
+The frequency module is **not** doing a dramatic “switch which model to trust” behavior. Instead:
+
+1) **The frequency effect is small in magnitude**
+- Example run: `alpha ≈ 0.25`
+- RMS(`base_w`) ≈ 0.33
+- RMS(`alpha * delta_w`) ≈ 0.007
+
+So the frequency correction is only a few percent of the base weight scale. This matches the intuition that the per-label weights already learn most label-specific trust patterns, and frequency adds a small but meaningful adjustment.
+
+2) **Global trust across models barely changes**
+Averaged over all labels, mean weights per model change only slightly. The gains come from **label-dependent** adjustments, not from “trust model X more overall”.
+
+3) **The learned effect looks like frequency-dependent shrinkage, not pure trust redistribution**
+Across frequency bins, the residual deltas often push **all models down together** for certain frequency regimes (especially mid-frequency labels), rather than increasing one model while decreasing another.
+
+This suggests the frequency module is acting more like:
+- a **frequency-conditioned calibration/shrinkage** mechanism (reducing overconfident contributions in certain regimes),
+than:
+- a clean “model A for frequent labels, model B for rare labels” selector.
+
+4) **The strongest adjustments occur in mid-frequency bins**
+The largest negative deltas were observed for labels with counts like `6–20` and `21–100`, while zero-shot labels (`count==0`) had near-uniform weights and tiny deltas.
+
+Practical takeaway:
+> Frequency features can help, but in this parameterization they are primarily used to learn a *frequency-conditioned scaling/shrinkage* of contributions, not a hard or soft routing between base models.
+
+This also suggests a future experiment:
+- If we want to force “trust redistribution” rather than “shrink everyone”, constrain `delta_w` to be **zero-mean across models per label** (so it can only reallocate weight between models, not scale all of them together).
+
+---
+
+### 3. Simple mean / mean+bias ensembles are strong baselines
 **Models:** `torch_mean`, `torch_mean_bias`
 
 - Extremely stable across epochs
@@ -58,7 +111,7 @@ These are excellent:
 
 ---
 
-### 3. Early epochs matter more than convergence
+### 4. Early epochs matter more than convergence
 Across multiple runs:
 - Training loss keeps improving
 - **Test NDCG peaks early** (epoch 2–4)
@@ -70,7 +123,7 @@ Even without automatic early stopping:
 
 ---
 
-### 4. Epoch ensembling is safe but offers limited gains
+### 5. Epoch ensembling is safe but offers limited gains
 
 **Model:** `torch_per_label_conv_epoch02_03`  
 **Method:** Simple convex combination of logits from two early checkpoints  
@@ -109,7 +162,7 @@ Practical implication:
 
 ---
 
-### 4. Sub-linear input scaling significantly improves results (sqrt → log1p)
+### 6. Sub-linear input scaling significantly improves results (sqrt → log1p)
 Applying a simple preprocessing step to **all ensemble inputs** had a **large positive impact** on both:
 - **Test NDCG@10**
 - **Test NDCG@1000**
@@ -345,16 +398,15 @@ Conclusion:
 
 ## ✅ Current best configuration (recommended)
 
-- **Model:** `PerLabelWeightedEnsemble`
+- **Model:** `PerLabelWeightedEnsemble` or `torch_per_label_freq_gate` (depending on metric priority)
 - **Loss:** `BCEWithLogitsLoss()` (unweighted)
 - **Outputs:** raw logits
-- **Training:** ~3 epochs
-- **Selection:** choose best epoch by test/validation NDCG@10
+- **Training:** ~2–4 epochs
+- **Selection:** choose best epoch by train/validation NDCG (avoid test leakage)
 
-This setup is:
-- Simple
-- Reproducible
-- Consistently best across runs
+Notes:
+- `torch_per_label` remains best on **F1@5** in the current scoreboard.
+- `torch_per_label_freq_gate` is best on **NDCG@10** and **NDCG@1000** in the current scoreboard.
 
 ---
 
@@ -362,10 +414,14 @@ This setup is:
 
 Low-risk ideas that may still help:
 
-1. **Inference-time temperature scaling** on logits
-2. **Checkpointing + epoch selection** (formalize early stopping)
-3. **Input normalization across base models** (train statistics only)
-4. **Inspect learned per-label weights and biases** for diagnostics
+1. **Constrain frequency residuals to be trust redistribution**
+   - Force `delta_w` to be zero-mean across models per label
+   - This would separate “shrinkage/calibration” effects from “source selection” effects
+
+2. **Inference-time temperature scaling** on logits
+3. **Checkpointing + epoch selection** (formalize early stopping)
+4. **Input normalization across base models** (train statistics only)
+5. **Inspect learned per-label weights and biases** for diagnostics
 
 ---
 
