@@ -36,7 +36,10 @@ def main():
         load_csr("data/train-mllm.npz"),
     ]
 
+    # Keep X_train on CPU; move only minibatches to GPU.
     X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds], dim=1)
+
+    # Keep Y_train on CPU (requested).
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
 
     print("Loading test data...")
@@ -48,11 +51,8 @@ def main():
         load_csr("data/test-mllm.npz"),
     ]
 
+    # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_log1p_tensor(p) for p in test_preds], dim=1)
-
-    X_train = X_train.to(DEVICE)
-    Y_train = Y_train.to(DEVICE)
-    X_test = X_test.to(DEVICE)
 
     model = MeanWeightedConv1D().to(DEVICE)
     optimizer = optim.AdamW(
@@ -96,7 +96,7 @@ def main():
 
         # --- Train evaluation ---
         with torch.no_grad():
-            full_train_output = model(X_train)
+            full_train_output = model(X_train.to(DEVICE))
 
         y_train_pred_csr = tensor_to_csr(full_train_output)
         train_metrics = {}
@@ -106,7 +106,7 @@ def main():
 
         # --- Test evaluation (computed for reporting only; NOT used for selection) ---
         with torch.no_grad():
-            output_test = model(X_test)
+            output_test = model(X_test.to(DEVICE))
 
         y_test_pred_csr = tensor_to_csr(output_test)
         test_metrics = {}

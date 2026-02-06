@@ -115,11 +115,15 @@ def main():
         load_csr("data/train-mllm.npz"),
     ]
 
+    # Keep X_train on CPU; move only minibatches to GPU.
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
+
+    # Keep Y_train on CPU (requested).
     Y_train = csr_to_dense_tensor(y_train_true)
 
     print("Loading test data...")
 
+    # Keep y_test_true / Y_test on CPU (requested).
     y_test_true = load_csr("data/test-output.npz")
     test_preds = [
         load_csr("data/test-bonsai.npz"),
@@ -127,11 +131,8 @@ def main():
         load_csr("data/test-mllm.npz"),
     ]
 
+    # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
-
-    X_train = X_train.to(DEVICE)
-    Y_train = Y_train.to(DEVICE)
-    X_test = X_test.to(DEVICE)
 
     n_models = X_train.shape[1]
     n_labels = X_train.shape[2]
@@ -183,7 +184,7 @@ def main():
 
         # --- Train evaluation ---
         with torch.no_grad():
-            train_scores = model(X_train)
+            train_scores = model(X_train.to(DEVICE))
 
         y_train_pred_csr = tensor_to_csr(train_scores)
         train_metrics = {}
@@ -193,7 +194,7 @@ def main():
 
         # --- Test evaluation (computed for reporting only; NOT used for selection) ---
         with torch.no_grad():
-            test_scores = model(X_test)
+            test_scores = model(X_test.to(DEVICE))
 
         y_test_pred_csr = tensor_to_csr(test_scores)
         test_metrics = {}
