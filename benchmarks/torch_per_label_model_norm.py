@@ -85,65 +85,58 @@ def csr_to_dense_log1p(csr) -> torch.Tensor:
     return torch.log1p(torch.clamp(x, min=0.0))
 
 
-def _compute_per_model_nonzero_stats(X_train: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def _compute_per_model_nonzero_scale(X_train: torch.Tensor) -> torch.Tensor:
     """
-    Compute per-model mean/std over nonzero entries only.
+    Compute per-model scale (std) over nonzero entries only.
 
     Args:
         X_train: (N, M, L) CPU tensor
 
     Returns:
-        mu:  (M,) CPU tensor
-        std: (M,) CPU tensor (>= EPS)
+        scale: (M,) CPU tensor (>= EPS)
     """
     if X_train.ndim != 3:
         raise ValueError(f"Expected X_train to have shape (N,M,L), got {X_train.shape}")
 
     n_models = X_train.shape[1]
-    mu = torch.zeros(n_models, dtype=torch.float32)
-    std = torch.ones(n_models, dtype=torch.float32)
+    scale = torch.ones(n_models, dtype=torch.float32)
 
-    # Compute stats per model to avoid huge temporary masks.
+    # Compute per-model std to avoid huge temporary masks.
     for m in range(n_models):
         xm = X_train[:, m, :]  # (N, L)
         nz = xm[xm != 0.0]
         if nz.numel() == 0:
-            mu[m] = 0.0
-            std[m] = 1.0
+            scale[m] = 1.0
             continue
-        mu[m] = nz.mean()
         s = nz.std(unbiased=False)
-        std[m] = s if float(s) > EPS else torch.tensor(EPS, dtype=torch.float32)
+        scale[m] = s if float(s) > EPS else torch.tensor(EPS, dtype=torch.float32)
 
-    return mu, std
+    return scale
 
 
-def _apply_per_model_norm_inplace(X: torch.Tensor, mu: torch.Tensor, std: torch.Tensor) -> None:
+def _apply_per_model_scale_norm_inplace(X: torch.Tensor, scale: torch.Tensor) -> None:
     """
-    Apply per-model normalization in-place to nonzero entries only:
-        x <- (x - mu[m]) / std[m]   for x != 0
+    Apply per-model scaling in-place to nonzero entries only:
+        x <- x / scale[m]   for x != 0
 
     Keeps zeros as zeros to preserve sparsity semantics.
 
     Args:
-        X:   (N, M, L) CPU tensor
-        mu:  (M,) CPU tensor
-        std: (M,) CPU tensor
+        X:     (N, M, L) CPU tensor
+        scale: (M,) CPU tensor
     """
     if X.ndim != 3:
         raise ValueError(f"Expected X to have shape (N,M,L), got {X.shape}")
-    if mu.ndim != 1 or std.ndim != 1:
-        raise ValueError("mu/std must be 1D tensors of shape (M,)")
-    if X.shape[1] != mu.shape[0] or X.shape[1] != std.shape[0]:
-        raise ValueError(
-            f"Model dim mismatch: X has M={X.shape[1]}, mu={mu.shape}, std={std.shape}"
-        )
+    if scale.ndim != 1:
+        raise ValueError("scale must be a 1D tensor of shape (M,)")
+    if X.shape[1] != scale.shape[0]:
+        raise ValueError(f"Model dim mismatch: X has M={X.shape[1]}, scale={scale.shape}")
 
     for m in range(X.shape[1]):
         xm = X[:, m, :]  # view
         mask = xm != 0.0
         if mask.any():
-            xm[mask] = (xm[mask] - mu[m]) / (std[m] + EPS)
+            xm[mask] = xm[mask] / (scale[m] + EPS)
 
 
 def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
@@ -180,19 +173,15 @@ def main():
     # Build X_train on CPU (log1p)
     X_train = torch.stack([csr_to_dense_log1p(p) for p in train_preds], dim=1)
 
-    # Y_train on CPU (log1p on labels is NOT desired; labels are 0/1)
+    # Y_train on CPU (labels are 0/1)
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
 
-    # Compute per-model normalization stats from train only (nonzero entries)
-    mu, std = _compute_per_model_nonzero_stats(X_train)
-    print(
-        "Per-model nonzero stats | "
-        f"mu={mu.numpy().round(6).tolist()} | "
-        f"std={std.numpy().round(6).tolist()}"
-    )
+    # Compute per-model scale from train only (nonzero entries)
+    scale = _compute_per_model_nonzero_scale(X_train)
+    print("Per-model nonzero scale (std) | " f"scale={scale.numpy().round(6).tolist()}")
 
-    # Apply normalization to train in-place
-    _apply_per_model_norm_inplace(X_train, mu, std)
+    # Apply scaling-only normalization to train in-place
+    _apply_per_model_scale_norm_inplace(X_train, scale)
 
     # Fixed random subset of train rows for per-epoch early stopping metric
     rng = np.random.default_rng(EARLY_STOP_SEED)
@@ -213,8 +202,8 @@ def main():
 
     X_test = torch.stack([csr_to_dense_log1p(p) for p in test_preds], dim=1)
 
-    # Apply the same train-derived normalization to test in-place
-    _apply_per_model_norm_inplace(X_test, mu, std)
+    # Apply the same train-derived scaling to test in-place
+    _apply_per_model_scale_norm_inplace(X_test, scale)
 
     n_models = X_train.shape[1]
     n_labels = X_train.shape[2]
