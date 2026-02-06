@@ -8,6 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
+from benchmarks.device import get_device
+
 # Allow running as a script: `uv run benchmarks/per_label_weighted_conv_ensemble.py`
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -82,7 +84,7 @@ class PerLabelWeightedConvEnsemble(nn.Module):
 # Training / evaluation script
 # ============================
 
-DEVICE = "cpu"
+DEVICE = get_device()
 EPOCHS = 10
 LR = 1e-3
 BATCH_SIZE = 32
@@ -104,6 +106,7 @@ def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
 def main():
     scoreboard_path = Path("SCOREBOARD.md")
 
+    print("Using device:", DEVICE)
     print("Loading training data...")
 
     y_train_true = load_csr("data/train-output.npz")
@@ -126,6 +129,10 @@ def main():
     ]
 
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
+
+    X_train = X_train.to(DEVICE)
+    Y_train = Y_train.to(DEVICE)
+    X_test = X_test.to(DEVICE)
 
     n_models = X_train.shape[1]
     n_labels = X_train.shape[2]
@@ -164,6 +171,9 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         for xb, yb in train_loader:
+            xb = xb.to(DEVICE)
+            yb = yb.to(DEVICE)
+
             optimizer.zero_grad()
             logits = model(xb)
             loss = criterion(logits, yb)

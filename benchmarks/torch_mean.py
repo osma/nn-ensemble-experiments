@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from benchmarks.device import get_device
 from benchmarks.preprocessing import csr_to_log1p_tensor, tensor_to_csr
 from benchmarks.models.torch_mean import MeanWeightedConv1D
 
@@ -13,7 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
-DEVICE = "cpu"
+DEVICE = get_device()
 EPOCHS = 10
 LR = 1e-3
 BATCH_SIZE = 32
@@ -26,6 +27,7 @@ MIN_EPOCHS = 2
 def main():
     scoreboard_path = Path("SCOREBOARD.md")
 
+    print("Using device:", DEVICE)
     print("Loading training data...")
 
     y_train_true = load_csr("data/train-output.npz")
@@ -36,7 +38,6 @@ def main():
     ]
 
     X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds], dim=1)
-
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
 
     print("Loading test data...")
@@ -49,6 +50,10 @@ def main():
     ]
 
     X_test = torch.stack([csr_to_log1p_tensor(p) for p in test_preds], dim=1)
+
+    X_train = X_train.to(DEVICE)
+    Y_train = Y_train.to(DEVICE)
+    X_test = X_test.to(DEVICE)
 
     model = MeanWeightedConv1D().to(DEVICE)
     optimizer = optim.AdamW(
@@ -79,6 +84,9 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         for xb, yb in train_loader:
+            xb = xb.to(DEVICE)
+            yb = yb.to(DEVICE)
+
             optimizer.zero_grad()
             output_train = model(xb)
             loss = criterion(output_train, yb)

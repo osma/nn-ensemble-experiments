@@ -5,6 +5,8 @@ import torch
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from benchmarks.device import get_device
+
 # Allow running as a script: `uv run benchmarks/epoch_ensemble.py`
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -37,7 +39,7 @@ def main():
         logits = α * logits_epoch_A + (1 - α) * logits_epoch_B
     """
 
-    DEVICE = "cpu"
+    DEVICE = get_device()
     EPOCHS = 3
     LR = 1e-3
     BATCH_SIZE = 32
@@ -53,6 +55,7 @@ def main():
 
     scoreboard_path = Path("SCOREBOARD.md")
 
+    print("Using device:", DEVICE)
     print("Loading data...")
 
     y_train_true = load_csr("data/train-output.npz")
@@ -72,6 +75,10 @@ def main():
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
     Y_train = csr_to_dense_tensor(y_train_true)
+
+    X_train = X_train.to(DEVICE)
+    X_test = X_test.to(DEVICE)
+    Y_train = Y_train.to(DEVICE)
 
     from benchmarks.torch_per_label_conv import PerLabelWeightedConvEnsemble
 
@@ -103,6 +110,9 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         for xb, yb in train_loader:
+            xb = xb.to(DEVICE)
+            yb = yb.to(DEVICE)
+
             optimizer.zero_grad()
             logits = model(xb)
             loss = criterion(logits, yb)
