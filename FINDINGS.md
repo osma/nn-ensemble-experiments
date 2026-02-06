@@ -577,8 +577,7 @@ Low-risk ideas that may still help:
 
 2. **Inference-time temperature scaling** on logits
 3. **Checkpointing + epoch selection** (formalize early stopping)
-4. **Input normalization across base models** (train statistics only)
-5. **Inspect learned per-label weights and biases** for diagnostics
+4. **Inspect learned per-label weights and biases** for diagnostics
 
 ---
 
