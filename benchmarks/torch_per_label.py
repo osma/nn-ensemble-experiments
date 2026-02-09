@@ -94,10 +94,10 @@ EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
 
-# Mini-grid search space (targeted around the current best region)
-LR_GRID = (0.0025, 0.003, 0.0035, 0.004)
-WEIGHT_DECAY_GRID = (0.0,)
-BATCH_SIZE_GRID = (256, 512)
+# Best hyperparameters (from tuning)
+BEST_LR = 0.003
+BEST_WEIGHT_DECAY = 0.0
+BEST_BATCH_SIZE = 256
 
 # Reproducibility for training shuffles / init
 TRAIN_SEED = 0
@@ -377,72 +377,39 @@ def main():
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
 
-    # ----------------
-    # Mini-grid search
-    # ----------------
-    grid: list[tuple[float, float, int]] = [
-        (lr, wd, bs)
-        for lr in LR_GRID
-        for wd in WEIGHT_DECAY_GRID
-        for bs in BATCH_SIZE_GRID
-    ]
     print(
-        f"Starting grid search over {len(grid)} configs "
-        f"(lr={list(LR_GRID)}, wd={list(WEIGHT_DECAY_GRID)}, bs={list(BATCH_SIZE_GRID)})"
+        "Training with best hyperparameters | "
+        f"lr={BEST_LR:g} | wd={BEST_WEIGHT_DECAY:g} | bs={BEST_BATCH_SIZE}"
     )
 
-    best_overall_metric = float("-inf")
-    best_overall_cfg: tuple[float, float, int] | None = None
-    best_overall_result: dict[str, object] | None = None
+    result = train_and_evaluate(
+        lr=BEST_LR,
+        weight_decay=BEST_WEIGHT_DECAY,
+        batch_size=BEST_BATCH_SIZE,
+        X_train=X_train,
+        Y_train=Y_train,
+        y_train_true=y_train_true,
+        X_train_eval=X_train_eval,
+        y_train_true_eval=y_train_true_eval,
+        X_test=X_test,
+        y_test_true=y_test_true,
+    )
 
-    search_t0 = time.perf_counter()
-    for i, (lr, wd, bs) in enumerate(grid, start=1):
-        print(f"\n=== Config {i}/{len(grid)}: lr={lr:g}, wd={wd:g}, bs={bs} ===")
-        result = train_and_evaluate(
-            lr=lr,
-            weight_decay=wd,
-            batch_size=bs,
-            X_train=X_train,
-            Y_train=Y_train,
-            y_train_true=y_train_true,
-            X_train_eval=X_train_eval,
-            y_train_true_eval=y_train_true_eval,
-            X_test=X_test,
-            y_test_true=y_test_true,
-        )
-
-        metric = float(result["best_metric"])
-        print(
-            f"Config done | best train_ndcg@1000(subset)={metric:.6f} "
-            f"at epoch={int(result['best_epoch'])}"
-        )
-
-        if metric > best_overall_metric:
-            best_overall_metric = metric
-            best_overall_cfg = (lr, wd, bs)
-            best_overall_result = result
-
-    search_dt = time.perf_counter() - search_t0
-
-    assert best_overall_cfg is not None
-    assert best_overall_result is not None
-
-    best_lr, best_wd, best_bs = best_overall_cfg
-    best_epoch = int(best_overall_result["best_epoch"])
-    best_train_metrics = best_overall_result["best_train_metrics"]
-    best_test_metrics = best_overall_result["best_test_metrics"]
-    best_n_used_train = int(best_overall_result["best_n_used_train"])
-    best_n_used_test = int(best_overall_result["best_n_used_test"])
+    best_epoch = int(result["best_epoch"])
+    best_metric = float(result["best_metric"])
+    best_train_metrics = result["best_train_metrics"]
+    best_test_metrics = result["best_test_metrics"]
+    best_n_used_train = int(result["best_n_used_train"])
+    best_n_used_test = int(result["best_n_used_test"])
 
     print("\n====================")
-    print("Grid search complete")
+    print("Training complete")
     print("====================")
-    print(f"Total search time: {search_dt:.1f}s")
     print(
         "Best hyperparameters | "
-        f"lr={best_lr:g} | wd={best_wd:g} | bs={best_bs} | "
+        f"lr={BEST_LR:g} | wd={BEST_WEIGHT_DECAY:g} | bs={BEST_BATCH_SIZE} | "
         f"best_epoch={best_epoch} | "
-        f"train_ndcg@1000(subset)={best_overall_metric:.6f}"
+        f"train_ndcg@1000(subset)={best_metric:.6f}"
     )
     print(
         "Best test metrics | "
@@ -451,7 +418,7 @@ def main():
         f"f1@5={float(best_test_metrics['f1@5']):.6f}"
     )
 
-    # Update scoreboard with the best result only (keeps SCOREBOARD.md clean)
+    # Update scoreboard with the best result
     update_markdown_scoreboard(
         path=scoreboard_path,
         model="torch_per_label",
@@ -469,7 +436,7 @@ def main():
         epoch=best_epoch,
     )
 
-    print("\nSaved best result to SCOREBOARD.md")
+    print("\nSaved result to SCOREBOARD.md")
 
 
 if __name__ == "__main__":
