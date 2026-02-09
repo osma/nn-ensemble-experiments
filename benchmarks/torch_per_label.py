@@ -85,8 +85,6 @@ class PerLabelWeightedEnsemble(nn.Module):
 
 DEVICE = get_device()
 EPOCHS = 10
-LR = 1e-3
-BATCH_SIZE = 32
 K_VALUES = (10, 1000)
 
 PATIENCE = 2
@@ -95,6 +93,14 @@ MIN_EPOCHS = 2
 EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
+
+# Grid search space
+LR_GRID = (3e-4, 1e-3, 3e-3)
+WEIGHT_DECAY_GRID = (0.0, 1e-4, 1e-3)
+BATCH_SIZE_GRID = (8, 16, 32, 64)
+
+# Reproducibility for training shuffles / init
+TRAIN_SEED = 0
 
 
 def csr_to_dense_tensor(csr):
@@ -145,6 +151,190 @@ def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Te
     return torch.cat(outs, dim=0)
 
 
+def train_and_evaluate(
+    *,
+    lr: float,
+    weight_decay: float,
+    batch_size: int,
+    X_train: torch.Tensor,
+    Y_train: torch.Tensor,
+    y_train_true: csr_matrix,
+    X_train_eval: torch.Tensor,
+    y_train_true_eval: csr_matrix,
+    X_test: torch.Tensor,
+    y_test_true: csr_matrix,
+) -> dict[str, object]:
+    """
+    Train a model with given hyperparameters and return the best snapshot
+    selected by TRAIN subset NDCG@1000 (early stopping metric).
+
+    Returns dict with:
+      - best_metric (float): best train subset NDCG@1000
+      - best_epoch (int)
+      - best_train_metrics (dict[str,float]) computed on full train at best epoch
+      - best_test_metrics (dict[str,float]) computed on test at best epoch
+      - best_n_used_train (int)
+      - best_n_used_test (int)
+      - timing (dict[str,float]) rough totals
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+
+    # Make each run deterministic-ish (init + dataloader shuffle)
+    torch.manual_seed(TRAIN_SEED)
+    if DEVICE.type == "cuda":
+        torch.cuda.manual_seed_all(TRAIN_SEED)
+
+    n_models = X_train.shape[1]
+    n_labels = X_train.shape[2]
+
+    model = PerLabelWeightedEnsemble(
+        n_models=n_models,
+        n_labels=n_labels,
+    ).to(DEVICE)
+
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+        eps=1e-8,
+    )
+
+    # Unweighted BCE performs best for NDCG in this setup
+    criterion = nn.BCEWithLogitsLoss()
+
+    train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
+    train_loader = torch.utils.data.DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        pin_memory=(DEVICE.type == "cuda"),
+    )
+
+    best_metric = float("-inf")
+    best_epoch: int | None = None
+    best_state: dict[str, torch.Tensor] | None = None
+    best_train_metrics: dict[str, float] | None = None
+    best_test_metrics: dict[str, float] | None = None
+    best_n_used_train: int | None = None
+    best_n_used_test: int | None = None
+    epochs_no_improve = 0
+
+    t_total_train_step = 0.0
+    t_total_pred_train = 0.0
+    t_total_pred_test = 0.0
+    t_total_metrics = 0.0
+
+    for epoch in range(1, EPOCHS + 1):
+        epoch_t0 = time.perf_counter()
+
+        model.train()
+        with _Timer() as t_train_step:
+            for xb, yb in train_loader:
+                xb = xb.to(DEVICE, non_blocking=True)
+                yb = yb.to(DEVICE, non_blocking=True)
+
+                optimizer.zero_grad()
+                logits = model(xb)
+                loss = criterion(logits, yb)
+                loss.backward()
+                optimizer.step()
+        t_total_train_step += float(t_train_step.dt or 0.0)
+
+        # --- Train evaluation for early stopping (subset only) ---
+        with _Timer() as t_pred_train:
+            train_scores_eval = _predict_in_batches(model, X_train_eval)
+        t_total_pred_train += float(t_pred_train.dt or 0.0)
+
+        with _Timer() as t_metric_train:
+            train_ndcg1000, _n_used_train_eval = ndcg_at_k_dense(
+                y_train_true_eval, train_scores_eval, k=1000
+            )
+        t_total_metrics += float(t_metric_train.dt or 0.0)
+
+        # --- Test evaluation (batched; no CSR conversion) ---
+        with _Timer() as t_pred_test:
+            test_scores = _predict_in_batches(model, X_test)
+        t_total_pred_test += float(t_pred_test.dt or 0.0)
+
+        test_metrics: dict[str, float] = {}
+        n_used_test: int | None = None
+        with _Timer() as t_metric_test:
+            for k in K_VALUES:
+                ndcg, n_used_test = ndcg_at_k_dense(y_test_true, test_scores, k=k)
+                test_metrics[f"ndcg@{k}"] = ndcg
+
+            f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
+            test_metrics["f1@5"] = f1
+        t_total_metrics += float(t_metric_test.dt or 0.0)
+
+        epoch_dt = time.perf_counter() - epoch_t0
+
+        def _dt(timer: _Timer) -> float:
+            return float(timer.dt) if timer.dt is not None else 0.0
+
+        print(
+            f"[lr={lr:g} wd={weight_decay:g} bs={batch_size}] "
+            f"Epoch {epoch:02d} | "
+            f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
+            f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
+            f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
+            f"test_f1@5={test_metrics['f1@5']:.6f} | "
+            f"timing train_step={_dt(t_train_step):.3f}s pred_train={_dt(t_pred_train):.3f}s "
+            f"pred_test={_dt(t_pred_test):.3f}s metrics={_dt(t_metric_train)+_dt(t_metric_test):.3f}s "
+            f"total={epoch_dt:.3f}s"
+        )
+
+        current = train_ndcg1000
+        if current > best_metric:
+            best_metric = current
+            best_epoch = epoch
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+            # Compute full train metrics only for the best epoch snapshot
+            full_train_scores = _predict_in_batches(model, X_train)
+            best_train_metrics = {}
+            n_used_train_full: int | None = None
+            for k in K_VALUES:
+                ndcg, n_used_train_full = ndcg_at_k_dense(y_train_true, full_train_scores, k=k)
+                best_train_metrics[f"ndcg@{k}"] = ndcg
+            best_n_used_train = int(n_used_train_full or 0)
+
+            best_test_metrics = test_metrics.copy()
+            best_n_used_test = int(n_used_test or 0)
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epoch >= MIN_EPOCHS and epochs_no_improve >= PATIENCE:
+            break
+
+    assert best_state is not None
+    assert best_epoch is not None
+    assert best_train_metrics is not None
+    assert best_test_metrics is not None
+    assert best_n_used_train is not None
+    assert best_n_used_test is not None
+
+    # Load best snapshot before returning (useful if caller wants to reuse model later)
+    model.load_state_dict(best_state)
+
+    return {
+        "best_metric": float(best_metric),
+        "best_epoch": int(best_epoch),
+        "best_train_metrics": best_train_metrics,
+        "best_test_metrics": best_test_metrics,
+        "best_n_used_train": int(best_n_used_train),
+        "best_n_used_test": int(best_n_used_test),
+        "timing": {
+            "train_step_s": float(t_total_train_step),
+            "pred_train_s": float(t_total_pred_train),
+            "pred_test_s": float(t_total_pred_test),
+            "metrics_s": float(t_total_metrics),
+        },
+    }
+
+
 def main():
     scoreboard_path = Path("SCOREBOARD.md")
 
@@ -185,131 +375,78 @@ def main():
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
 
-    n_models = X_train.shape[1]
-    n_labels = X_train.shape[2]
-
-    model = PerLabelWeightedEnsemble(
-        n_models=n_models,
-        n_labels=n_labels,
-    ).to(DEVICE)
-
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=LR,
-        weight_decay=0.001,
-        eps=1e-8,
+    # ----------------
+    # Grid search loop
+    # ----------------
+    grid: list[tuple[float, float, int]] = [
+        (lr, wd, bs) for lr in LR_GRID for wd in WEIGHT_DECAY_GRID for bs in BATCH_SIZE_GRID
+    ]
+    print(
+        f"Starting grid search over {len(grid)} configs "
+        f"(lr={list(LR_GRID)}, wd={list(WEIGHT_DECAY_GRID)}, bs={list(BATCH_SIZE_GRID)})"
     )
 
-    # Unweighted BCE performs best for NDCG in this setup
-    criterion = nn.BCEWithLogitsLoss()
+    best_overall_metric = float("-inf")
+    best_overall_cfg: tuple[float, float, int] | None = None
+    best_overall_result: dict[str, object] | None = None
 
-    print("Starting training...")
-
-    train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
-    train_loader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
-
-    # Early stopping: select best epoch by TRAIN NDCG@1000 (no test leakage)
-    best_metric = float("-inf")
-    best_epoch = None
-    best_state = None
-    best_train_metrics = None
-    best_test_metrics = None
-    best_n_used_train = None
-    best_n_used_test = None
-    epochs_no_improve = 0
-
-    for epoch in range(1, EPOCHS + 1):
-        epoch_t0 = time.perf_counter()
-
-        model.train()
-        with _Timer() as t_train_step:
-            for xb, yb in train_loader:
-                xb = xb.to(DEVICE, non_blocking=True)
-                yb = yb.to(DEVICE, non_blocking=True)
-
-                optimizer.zero_grad()
-                logits = model(xb)
-                loss = criterion(logits, yb)
-                loss.backward()
-                optimizer.step()
-
-        # --- Train evaluation for early stopping (subset only) ---
-        with _Timer() as t_pred_train:
-            train_scores_eval = _predict_in_batches(model, X_train_eval)
-
-        t_ndcg_train: dict[int, float] = {}
-        with _Timer() as t:
-            train_ndcg1000, n_used_train = ndcg_at_k_dense(
-                y_train_true_eval, train_scores_eval, k=1000
-            )
-        assert t.dt is not None
-        t_ndcg_train[1000] = t.dt
-
-        # --- Test evaluation (batched; no CSR conversion) ---
-        with _Timer() as t_pred_test:
-            test_scores = _predict_in_batches(model, X_test)
-
-        test_metrics = {}
-        t_ndcg_test: dict[int, float] = {}
-        for k in K_VALUES:
-            with _Timer() as t:
-                ndcg, n_used_test = ndcg_at_k_dense(y_test_true, test_scores, k=k)
-            assert t.dt is not None
-            t_ndcg_test[k] = t.dt
-            test_metrics[f"ndcg@{k}"] = ndcg
-
-        with _Timer() as t_f1:
-            f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
-        test_metrics["f1@5"] = f1
-
-        epoch_dt = time.perf_counter() - epoch_t0
-
-        def _dt(timer: _Timer) -> float:
-            return float(timer.dt) if timer.dt is not None else 0.0
-
-        print(
-            f"Epoch {epoch:02d} timing | "
-            f"train_step={_dt(t_train_step):.3f}s | "
-            f"pred_train={_dt(t_pred_train):.3f}s | "
-            f"ndcg_train@1000={t_ndcg_train.get(1000, 0.0):.3f}s | "
-            f"pred_test={_dt(t_pred_test):.3f}s | "
-            f"ndcg_test@10={t_ndcg_test.get(10, 0.0):.3f}s ndcg_test@1000={t_ndcg_test.get(1000, 0.0):.3f}s | "
-            f"f1@5={_dt(t_f1):.3f}s | "
-            f"total={epoch_dt:.3f}s"
+    search_t0 = time.perf_counter()
+    for i, (lr, wd, bs) in enumerate(grid, start=1):
+        print(f"\n=== Config {i}/{len(grid)}: lr={lr:g}, wd={wd:g}, bs={bs} ===")
+        result = train_and_evaluate(
+            lr=lr,
+            weight_decay=wd,
+            batch_size=bs,
+            X_train=X_train,
+            Y_train=Y_train,
+            y_train_true=y_train_true,
+            X_train_eval=X_train_eval,
+            y_train_true_eval=y_train_true_eval,
+            X_test=X_test,
+            y_test_true=y_test_true,
         )
 
-        current = train_ndcg1000
-        if current > best_metric:
-            best_metric = current
-            best_epoch = epoch
-            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        metric = float(result["best_metric"])
+        print(
+            f"Config done | best train_ndcg@1000(subset)={metric:.6f} "
+            f"at epoch={int(result['best_epoch'])}"
+        )
 
-            # Compute full train metrics only for the best epoch snapshot
-            full_train_scores = _predict_in_batches(model, X_train)
-            best_train_metrics = {}
-            for k in K_VALUES:
-                ndcg, n_used_train_full = ndcg_at_k_dense(
-                    y_train_true, full_train_scores, k=k
-                )
-                best_train_metrics[f"ndcg@{k}"] = ndcg
-            best_n_used_train = n_used_train_full
+        if metric > best_overall_metric:
+            best_overall_metric = metric
+            best_overall_cfg = (lr, wd, bs)
+            best_overall_result = result
 
-            best_test_metrics = test_metrics.copy()
-            best_n_used_test = n_used_test
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
+    search_dt = time.perf_counter() - search_t0
 
-        if epoch >= MIN_EPOCHS and epochs_no_improve >= PATIENCE:
-            break
+    assert best_overall_cfg is not None
+    assert best_overall_result is not None
 
-    model.load_state_dict(best_state)
+    best_lr, best_wd, best_bs = best_overall_cfg
+    best_epoch = int(best_overall_result["best_epoch"])
+    best_train_metrics = best_overall_result["best_train_metrics"]
+    best_test_metrics = best_overall_result["best_test_metrics"]
+    best_n_used_train = int(best_overall_result["best_n_used_train"])
+    best_n_used_test = int(best_overall_result["best_n_used_test"])
 
+    print("\n====================")
+    print("Grid search complete")
+    print("====================")
+    print(f"Total search time: {search_dt:.1f}s")
+    print(
+        "Best hyperparameters | "
+        f"lr={best_lr:g} | wd={best_wd:g} | bs={best_bs} | "
+        f"best_epoch={best_epoch} | "
+        f"train_ndcg@1000(subset)={best_overall_metric:.6f}"
+    )
+    print(
+        "Best test metrics | "
+        f"ndcg@10={float(best_test_metrics['ndcg@10']):.6f} | "
+        f"ndcg@1000={float(best_test_metrics['ndcg@1000']):.6f} | "
+        f"f1@5={float(best_test_metrics['f1@5']):.6f}"
+    )
+
+    # Update scoreboard with the best result only (keeps SCOREBOARD.md clean)
     update_markdown_scoreboard(
         path=scoreboard_path,
         model="torch_per_label",
@@ -327,13 +464,6 @@ def main():
         epoch=best_epoch,
     )
 
-    print(
-        "\nFinal test metrics | "
-        f"ndcg@10={best_test_metrics['ndcg@10']:.6f} | "
-        f"ndcg@1000={best_test_metrics['ndcg@1000']:.6f} | "
-        f"f1@5={best_test_metrics['f1@5']:.6f} | "
-        f"epoch={best_epoch}"
-    )
     print("\nSaved best result to SCOREBOARD.md")
 
 
