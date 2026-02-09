@@ -97,7 +97,7 @@ EARLY_STOP_SEED = 1337
 # Grid search space
 LR_GRID = (3e-4, 1e-3, 3e-3)
 WEIGHT_DECAY_GRID = (0.0, 1e-4, 1e-3)
-BATCH_SIZE_GRID = (8, 16, 32, 64)
+BATCH_SIZE_GRID = (8, 16, 32, 64, 128, 256)
 
 # Reproducibility for training shuffles / init
 TRAIN_SEED = 0
@@ -296,7 +296,9 @@ def train_and_evaluate(
             best_train_metrics = {}
             n_used_train_full: int | None = None
             for k in K_VALUES:
-                ndcg, n_used_train_full = ndcg_at_k_dense(y_train_true, full_train_scores, k=k)
+                ndcg, n_used_train_full = ndcg_at_k_dense(
+                    y_train_true, full_train_scores, k=k
+                )
                 best_train_metrics[f"ndcg@{k}"] = ndcg
             best_n_used_train = int(n_used_train_full or 0)
 
@@ -379,7 +381,10 @@ def main():
     # Grid search loop
     # ----------------
     grid: list[tuple[float, float, int]] = [
-        (lr, wd, bs) for lr in LR_GRID for wd in WEIGHT_DECAY_GRID for bs in BATCH_SIZE_GRID
+        (lr, wd, bs)
+        for lr in LR_GRID
+        for wd in WEIGHT_DECAY_GRID
+        for bs in BATCH_SIZE_GRID
     ]
     print(
         f"Starting grid search over {len(grid)} configs "
