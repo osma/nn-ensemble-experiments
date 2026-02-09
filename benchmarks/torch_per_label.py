@@ -94,10 +94,10 @@ EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
 
-# Grid search space
-LR_GRID = (3e-4, 1e-3, 3e-3)
-WEIGHT_DECAY_GRID = (0.0, 1e-4, 1e-3)
-BATCH_SIZE_GRID = (8, 16, 32, 64, 128, 256)
+# Mini-grid search space (targeted around the current best region)
+LR_GRID = (0.0025, 0.003, 0.0035, 0.004)
+WEIGHT_DECAY_GRID = (0.0,)
+BATCH_SIZE_GRID = (256, 512)
 
 # Reproducibility for training shuffles / init
 TRAIN_SEED = 0
@@ -378,7 +378,7 @@ def main():
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
 
     # ----------------
-    # Grid search loop
+    # Mini-grid search
     # ----------------
     grid: list[tuple[float, float, int]] = [
         (lr, wd, bs)
