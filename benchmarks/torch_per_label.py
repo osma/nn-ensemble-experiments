@@ -45,13 +45,31 @@ class PerLabelWeightedEnsemble(nn.Module):
     - Intended for use with BCEWithLogitsLoss or ranking-aware losses.
     """
 
-    def __init__(self, n_models: int, n_labels: int):
+    def __init__(
+        self,
+        n_models: int,
+        n_labels: int,
+        init_model_weights: torch.Tensor | None = None,
+    ):
         super().__init__()
         self.n_models = n_models
         self.n_labels = n_labels
 
-        # Per-model, per-label weights
-        self.weights = nn.Parameter(torch.full((n_models, n_labels), 1.0 / n_models))
+        if init_model_weights is None:
+            init = torch.full((n_models,), 1.0 / n_models, dtype=torch.float32)
+        else:
+            if init_model_weights.ndim != 1 or init_model_weights.shape[0] != n_models:
+                raise ValueError(
+                    f"init_model_weights must have shape ({n_models},), got {tuple(init_model_weights.shape)}"
+                )
+            init = init_model_weights.to(dtype=torch.float32).clone()
+            s = float(init.sum().item())
+            if not np.isfinite(s) or s <= 0.0:
+                raise ValueError("init_model_weights must sum to a positive finite value")
+            init = init / init.sum()
+
+        # Per-model, per-label weights (initialize each label with the same per-model weights)
+        self.weights = nn.Parameter(init[:, None].repeat(1, n_labels))
 
         # Per-label bias
         self.bias = nn.Parameter(torch.zeros(n_labels))
@@ -101,6 +119,11 @@ BEST_BATCH_SIZE = 256
 
 # Reproducibility for training shuffles / init
 TRAIN_SEED = 0
+
+# Initial per-source weights (must match train_preds/test_preds order below)
+# Desired mapping: mllm=0.1492, fasttext=0.6090, bonsai=0.2418
+# Current order: [bonsai, fasttext, mllm]
+INIT_SOURCE_WEIGHTS = torch.tensor([0.2418, 0.6090, 0.1492], dtype=torch.float32)
 
 
 def csr_to_dense_tensor(csr):
@@ -188,9 +211,16 @@ def train_and_evaluate(
     n_models = X_train.shape[1]
     n_labels = X_train.shape[2]
 
+    if INIT_SOURCE_WEIGHTS.shape[0] != n_models:
+        raise ValueError(
+            f"INIT_SOURCE_WEIGHTS has length {INIT_SOURCE_WEIGHTS.shape[0]}, but X_train has n_models={n_models}. "
+            "Update INIT_SOURCE_WEIGHTS to match the number/order of base models."
+        )
+
     model = PerLabelWeightedEnsemble(
         n_models=n_models,
         n_labels=n_labels,
+        init_model_weights=INIT_SOURCE_WEIGHTS,
     ).to(DEVICE)
 
     optimizer = optim.AdamW(
