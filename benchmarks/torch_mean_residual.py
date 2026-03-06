@@ -53,7 +53,7 @@ EARLY_STOP_SEED = 1337
 # Hyperparameters for "residual" approach
 LR = 0.003
 WEIGHT_DECAY = 0.0  # rely on explicit residual penalty
-LAMBDA_DELTA_L2 = 1e-3  # strength of shrinkage of per-label residuals toward 0
+LAMBDA_DELTA_L2 = 1e-2  # strength of shrinkage of per-label residuals toward 0
 
 # Reproducibility
 TRAIN_SEED = 0
@@ -173,9 +173,15 @@ def main() -> None:
         default=LAMBDA_DELTA_L2,
         help="L2 shrinkage strength for per-label residual weights (delta_w)",
     )
+    parser.add_argument(
+        "--print-delta",
+        action="store_true",
+        help="Print delta_w diagnostics (delta_l2 and per-model mean |delta|) each epoch",
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
     lambda_delta = float(args.lambda_delta)
+    print_delta = bool(args.print_delta)
 
     # Deterministic-ish
     torch.manual_seed(TRAIN_SEED)
@@ -283,6 +289,21 @@ def main() -> None:
         f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
         test_metrics["f1@5"] = f1
 
+        diag = ""
+        if print_delta:
+            with torch.no_grad():
+                delta_l2 = float(model.delta_l2().detach().cpu().item())
+                mean_abs_delta_per_model = (
+                    model.delta_w.detach().abs().mean(dim=1).cpu().numpy()
+                )
+            diag = (
+                " | "
+                f"delta_l2={delta_l2:.6e} "
+                f"mean_abs_delta=[{mean_abs_delta_per_model[0]:.3e},"
+                f"{mean_abs_delta_per_model[1]:.3e},"
+                f"{mean_abs_delta_per_model[2]:.3e}]"
+            )
+
         print(
             f"[lambda_delta={lambda_delta:g}] "
             f"Epoch {epoch:02d} | "
@@ -294,6 +315,7 @@ def main() -> None:
             f"timing train={float(t_train.dt or 0.0):.3f}s "
             f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
+            f"{diag}"
         )
 
         current = float(train_ndcg1000)
