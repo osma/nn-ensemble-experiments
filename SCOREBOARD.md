@@ -26,9 +26,9 @@
 | torch_mean_bias(bonsai,fasttext,mllm) | yso-en | 10 | 0.674754 | 0.744848 | 0.626509 | 0.693832 | 0.445743 |
 | torch_mean_bias(bonsai,fasttext,mllm) | yso-fi | 10 | 0.731111 | 0.805586 | 0.677608 | 0.767045 | 0.518328 |
 | torch_mean_bias(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 7 | 0.416765 | 0.481197 | 0.336639 | 0.384107 | 0.247349 |
-| torch_per_label(bonsai,fasttext,mllm) | yso-en | 10 | 0.653694 | 0.768761 | 0.559324 | 0.714516 | 0.385272 |
+| torch_per_label(bonsai,fasttext,mllm) | yso-en | 10 | 0.594939 | 0.724244 | 0.500858 | 0.667106 | 0.343190 |
 | torch_per_label(bonsai,fasttext,mllm) | yso-fi | 5 | 0.725988 | 0.823065 | 0.710171 | 0.816454 | 0.544132 |
-| torch_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.409285 | 0.533807 | 0.343566 | 0.458088 | 0.253179 |
+| torch_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.404260 | 0.526167 | 0.336026 | 0.446946 | 0.245734 |
 | torch_per_label_conv(bonsai,fasttext,mllm) | yso-en | 10 | 0.504217 | 0.672545 | 0.406139 | 0.604129 | 0.275098 |
 | torch_per_label_conv(bonsai,fasttext,mllm) | yso-fi | 10 | 0.729305 | 0.821383 | 0.701943 | 0.806468 | 0.533019 |
 | torch_per_label_conv(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.404417 | 0.532019 | 0.340194 | 0.455562 | 0.249534 |
@@ -38,9 +38,9 @@
 | torch_per_label_freq_reg(bonsai,fasttext,mllm) | yso-en | 10 | 0.563844 | 0.705697 | 0.427240 | 0.617491 | 0.279591 |
 | torch_per_label_freq_reg(bonsai,fasttext,mllm) | yso-fi | 5 | 0.733841 | 0.826144 | 0.707222 | 0.813457 | 0.538189 |
 | torch_per_label_freq_reg(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 2 | 0.407270 | 0.528842 | 0.338014 | 0.448229 | 0.248230 |
-| torch_per_label_l1_delta(bonsai,fasttext,mllm) | yso-en | 10 | 0.639525 | 0.759576 | 0.558206 | 0.713001 | 0.391758 |
+| torch_per_label_l1_delta(bonsai,fasttext,mllm) | yso-en | 10 | 0.595045 | 0.724810 | 0.504414 | 0.669583 | 0.350857 |
 | torch_per_label_l1_delta(bonsai,fasttext,mllm) | yso-fi | 5 | 0.723691 | 0.820476 | 0.698256 | 0.806495 | 0.535650 |
-| torch_per_label_l1_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.414738 | 0.539033 | 0.343949 | 0.458412 | 0.253256 |
+| torch_per_label_l1_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 5 | 0.414152 | 0.535625 | 0.340294 | 0.452363 | 0.249850 |
 
 ## Top 10 Models by Avg Test NDCG@10 (across datasets)
 
@@ -49,9 +49,9 @@
 | 1 | torch_mean | 0.552181 | 0.660788 | 0.405533 |
 | 2 | mean_weighted | 0.549679 | 0.659789 | 0.402591 |
 | 3 | torch_mean_bias | 0.546919 | 0.614995 | 0.403807 |
-| 4 | torch_per_label | 0.537687 | 0.663019 | 0.394194 |
-| 5 | torch_per_label_l1_delta | 0.533470 | 0.659303 | 0.393555 |
-| 6 | nn | 0.520130 | 0.602356 | 0.383158 |
+| 4 | nn | 0.520130 | 0.602356 | 0.383158 |
+| 5 | torch_per_label | 0.515685 | 0.643502 | 0.377685 |
+| 6 | torch_per_label_l1_delta | 0.514321 | 0.642814 | 0.378786 |
 | 7 | torch_per_label_freq_reg | 0.490825 | 0.626392 | 0.355337 |
 | 8 | torch_per_label_conv | 0.482759 | 0.622053 | 0.352550 |
 | 9 | torch_per_label_freq_gate | 0.465417 | 0.610414 | 0.340186 |
@@ -61,10 +61,10 @@
 
 | Rank | Model | Test NDCG@1000 | Test NDCG@10 | Test F1@5 |
 |------|-------|----------------|--------------|-----------|
-| 1 | torch_per_label | 0.663019 | 0.537687 | 0.394194 |
-| 2 | torch_mean | 0.660788 | 0.552181 | 0.405533 |
-| 3 | mean_weighted | 0.659789 | 0.549679 | 0.402591 |
-| 4 | torch_per_label_l1_delta | 0.659303 | 0.533470 | 0.393555 |
+| 1 | torch_mean | 0.660788 | 0.552181 | 0.405533 |
+| 2 | mean_weighted | 0.659789 | 0.549679 | 0.402591 |
+| 3 | torch_per_label | 0.643502 | 0.515685 | 0.377685 |
+| 4 | torch_per_label_l1_delta | 0.642814 | 0.514321 | 0.378786 |
 | 5 | torch_per_label_freq_reg | 0.626392 | 0.490825 | 0.355337 |
 | 6 | torch_per_label_conv | 0.622053 | 0.482759 | 0.352550 |
 | 7 | torch_mean_bias | 0.614995 | 0.546919 | 0.403807 |
@@ -79,9 +79,9 @@
 | 1 | torch_mean | 0.405533 | 0.552181 | 0.660788 |
 | 2 | torch_mean_bias | 0.403807 | 0.546919 | 0.614995 |
 | 3 | mean_weighted | 0.402591 | 0.549679 | 0.659789 |
-| 4 | torch_per_label | 0.394194 | 0.537687 | 0.663019 |
-| 5 | torch_per_label_l1_delta | 0.393555 | 0.533470 | 0.659303 |
-| 6 | nn | 0.383158 | 0.520130 | 0.602356 |
+| 4 | nn | 0.383158 | 0.520130 | 0.602356 |
+| 5 | torch_per_label_l1_delta | 0.378786 | 0.514321 | 0.642814 |
+| 6 | torch_per_label | 0.377685 | 0.515685 | 0.643502 |
 | 7 | torch_per_label_freq_reg | 0.355337 | 0.490825 | 0.626392 |
 | 8 | torch_per_label_conv | 0.352550 | 0.482759 | 0.622053 |
 | 9 | torch_per_label_freq_gate | 0.340186 | 0.465417 | 0.610414 |
