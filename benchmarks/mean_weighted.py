@@ -1,15 +1,19 @@
 from pathlib import Path
 import itertools
 
+import argparse
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from .datasets import ensemble3_keys, pred_path, truth_path
 from .metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 K = 1000
 
 
-def weighted_mean_ensemble(matrices: dict[str, csr_matrix], weights: dict[str, float]) -> csr_matrix:
+def weighted_mean_ensemble(
+    matrices: dict[str, csr_matrix], weights: dict[str, float]
+) -> csr_matrix:
     """
     Compute a weighted mean ensemble of CSR prediction matrices.
     """
@@ -42,27 +46,31 @@ def generate_weight_grid(step: float = 0.1):
 
 
 def main():
-    models = ["bonsai", "fasttext", "mllm"]
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    args = parser.parse_args()
+    dataset = str(args.dataset)
 
-    train_preds = {
-        "bonsai": load_csr("data/train-bonsai.npz"),
-        "fasttext": load_csr("data/train-fasttext.npz"),
-        "mllm": load_csr("data/train-mllm.npz"),
-    }
-    train_true = load_csr("data/train-output.npz")
+    e3 = ensemble3_keys(dataset)
+    model_name = f"mean_weighted({','.join(e3)})"
 
-    print("=== GRID SEARCH (TRAIN, NDCG@1000) ===")
+    train_preds = {k: load_csr(str(pred_path(dataset, "train", k))) for k in e3}
+    train_true = load_csr(str(truth_path(dataset, "train")))
+
+    print(f"=== {dataset} | GRID SEARCH (TRAIN, NDCG@1000) ===")
     print("Ground truth shape:", train_true.shape)
 
     best_score = -1.0
     best_weights: dict[str, float] | None = None
 
     for w1, w2, w3 in generate_weight_grid(step=0.1):
-        weights = {
-            "bonsai": w1,
-            "fasttext": w2,
-            "mllm": w3,
-        }
+        weights = {e3[0]: w1, e3[1]: w2, e3[2]: w3}
 
         ensemble = weighted_mean_ensemble(train_preds, weights)
         score, _ = ndcg_at_k(train_true, ensemble, k=K)
@@ -80,14 +88,10 @@ def main():
 
     # Evaluate with fixed weights on both train and test
     for split in ("train", "test"):
-        print(f"\n=== {split.upper()} (WEIGHTED MEAN) ===")
+        print(f"\n=== {dataset} | {split.upper()} (WEIGHTED MEAN) ===")
 
-        y_true = load_csr(f"data/{split}-output.npz")
-        preds = {
-            "bonsai": load_csr(f"data/{split}-bonsai.npz"),
-            "fasttext": load_csr(f"data/{split}-fasttext.npz"),
-            "mllm": load_csr(f"data/{split}-mllm.npz"),
-        }
+        y_true = load_csr(str(truth_path(dataset, split)))
+        preds = {k: load_csr(str(pred_path(dataset, split, k))) for k in e3}
 
         ensemble = weighted_mean_ensemble(preds, best_weights)
 
@@ -102,8 +106,9 @@ def main():
 
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model="mean_weighted",
-            dataset=split,
+            model=model_name,
+            dataset=dataset,
+            split=split,
             metrics=metrics,
             n_samples=n_used,
         )

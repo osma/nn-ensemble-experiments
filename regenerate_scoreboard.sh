@@ -6,19 +6,26 @@ echo "Regenerating SCOREBOARD.md..."
 # Remove old scoreboard
 rm -f SCOREBOARD.md
 
-# Baselines
-uv run python -m benchmarks.baseline
+for ds in yso-fi yso-en koko; do
+  echo ""
+  echo "============================="
+  echo "DATASET: $ds"
+  echo "============================="
 
-# Non-torch ensembles
-uv run python -m benchmarks.mean
-uv run python -m benchmarks.mean_weighted
+  # Baselines
+  uv run python -m benchmarks.baseline --dataset "$ds"
 
-# Torch-based ensembles
-uv run python -m benchmarks.torch_mean
-uv run python -m benchmarks.torch_mean_bias
-uv run python -m benchmarks.torch_per_label
-uv run python -m benchmarks.torch_per_label_conv
-uv run python -m benchmarks.torch_per_label_freq_gate
-uv run python -m benchmarks.torch_per_label_freq_reg
+  # Non-torch ensembles (3-way as defined in benchmarks/datasets.py)
+  uv run python -m benchmarks.mean --dataset "$ds"
+  uv run python -m benchmarks.mean_weighted --dataset "$ds"
+
+  # Torch-based ensembles (3-way as defined in benchmarks/datasets.py)
+  uv run python -m benchmarks.torch_mean --dataset "$ds"
+  uv run python -m benchmarks.torch_mean_bias --dataset "$ds"
+  uv run python -m benchmarks.torch_per_label --dataset "$ds"
+  uv run python -m benchmarks.torch_per_label_conv --dataset "$ds"
+  uv run python -m benchmarks.torch_per_label_freq_gate --dataset "$ds"
+  uv run python -m benchmarks.torch_per_label_freq_reg --dataset "$ds"
+done
 
 echo "Done. SCOREBOARD.md regenerated."

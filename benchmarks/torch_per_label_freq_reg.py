@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
+from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.metrics import (
     load_csr,
@@ -151,6 +152,8 @@ def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Te
 
 def _train_one(
     *,
+    dataset: str,
+    ensemble_keys: tuple[str, str, str],
     lambda_w: float,
     lambda_b: float,
     freq_mode: str,
@@ -161,12 +164,8 @@ def _train_one(
     print("Using device:", DEVICE)
     print("Loading training data...")
 
-    y_train_true = load_csr("data/train-output.npz")
-    train_preds = [
-        load_csr("data/train-bonsai.npz"),
-        load_csr("data/train-fasttext.npz"),
-        load_csr("data/train-mllm.npz"),
-    ]
+    y_train_true = load_csr(str(truth_path(dataset, "train")))
+    train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in ensemble_keys]
 
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
     Y_train = csr_to_dense_tensor(y_train_true)
@@ -186,12 +185,8 @@ def _train_one(
 
     print("Loading test data...")
 
-    y_test_true = load_csr("data/test-output.npz")
-    test_preds = [
-        load_csr("data/test-bonsai.npz"),
-        load_csr("data/test-fasttext.npz"),
-        load_csr("data/test-mllm.npz"),
-    ]
+    y_test_true = load_csr(str(truth_path(dataset, "test")))
+    test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in ensemble_keys]
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
 
     n_models = X_train.shape[1]
@@ -333,18 +328,21 @@ def _train_one(
     model.load_state_dict(best_state)
 
     if update_scoreboard:
+        model_name = f"torch_per_label_freq_reg({','.join(ensemble_keys)})"
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model="torch_per_label_freq_reg",
-            dataset="train",
+            model=model_name,
+            dataset=dataset,
+            split="train",
             metrics=best_train_metrics,
             n_samples=best_n_used_train,
             epoch=best_epoch,
         )
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model="torch_per_label_freq_reg",
-            dataset="test",
+            model=model_name,
+            dataset=dataset,
+            split="test",
             metrics=best_test_metrics,
             n_samples=best_n_used_test,
             epoch=best_epoch,
@@ -377,6 +375,13 @@ def _train_one(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    parser.add_argument(
         "--sweep",
         action="store_true",
         help="Run a small grid over (lambda_w, lambda_b, freq_mode) and keep the best by the early-stop metric.",
@@ -392,8 +397,13 @@ def main():
     )
     args = parser.parse_args()
 
+    dataset = str(args.dataset)
+    ensemble_keys = ensemble3_keys(dataset)
+
     if not args.sweep:
         _train_one(
+            dataset=dataset,
+            ensemble_keys=ensemble_keys,
             lambda_w=float(args.lambda_w),
             lambda_b=float(args.lambda_b),
             freq_mode=str(args.freq_mode),
@@ -421,6 +431,8 @@ def main():
                 print("=" * 80 + "\n")
 
                 r = _train_one(
+                    dataset=dataset,
+                    ensemble_keys=ensemble_keys,
                     lambda_w=lw,
                     lambda_b=lb,
                     freq_mode=fm,
@@ -462,6 +474,8 @@ def main():
 
     print("\nRe-running best config to update SCOREBOARD.md...\n")
     _train_one(
+        dataset=dataset,
+        ensemble_keys=ensemble_keys,
         lambda_w=float(best["lambda_w"]),
         lambda_b=float(best["lambda_b"]),
         freq_mode=str(best["freq_mode"]),

@@ -4,10 +4,12 @@ import sys
 # Allow running as a script: `uv run benchmarks/epoch_ensemble.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import argparse
 import torch
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
@@ -38,6 +40,17 @@ def main():
         logits = α * logits_epoch_A + (1 - α) * logits_epoch_B
     """
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    args = parser.parse_args()
+    dataset = str(args.dataset)
+
     DEVICE = get_device()
     EPOCHS = 3
     LR = 1e-3
@@ -57,19 +70,13 @@ def main():
     print("Using device:", DEVICE)
     print("Loading data...")
 
-    y_train_true = load_csr("data/train-output.npz")
-    y_test_true = load_csr("data/test-output.npz")
+    e3 = ensemble3_keys(dataset)
 
-    train_preds = [
-        load_csr("data/train-bonsai.npz"),
-        load_csr("data/train-fasttext.npz"),
-        load_csr("data/train-mllm.npz"),
-    ]
-    test_preds = [
-        load_csr("data/test-bonsai.npz"),
-        load_csr("data/test-fasttext.npz"),
-        load_csr("data/test-mllm.npz"),
-    ]
+    y_train_true = load_csr(str(truth_path(dataset, "train")))
+    y_test_true = load_csr(str(truth_path(dataset, "test")))
+
+    train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in e3]
+    test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in e3]
 
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
@@ -152,8 +159,9 @@ def main():
 
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model=f"torch_per_label_conv_epoch{EPOCH_A:02d}_{EPOCH_B:02d}",
-            dataset=split,
+            model=f"torch_per_label_conv_epoch{EPOCH_A:02d}_{EPOCH_B:02d}({','.join(e3)})",
+            dataset=dataset,
+            split=split,
             metrics=metrics,
             n_samples=n_used,
         )

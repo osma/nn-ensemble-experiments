@@ -6,9 +6,11 @@ import sys
 # Allow running as a script: `uv run benchmarks/mean.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import argparse
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 K = 1000
@@ -30,32 +32,27 @@ def mean_ensemble(matrices: list[csr_matrix]) -> csr_matrix:
 
 
 def main():
-    splits = {
-        "train": {
-            "truth": "data/train-output.npz",
-            "models": {
-                "bonsai": "data/train-bonsai.npz",
-                "fasttext": "data/train-fasttext.npz",
-                "mllm": "data/train-mllm.npz",
-            },
-        },
-        "test": {
-            "truth": "data/test-output.npz",
-            "models": {
-                "bonsai": "data/test-bonsai.npz",
-                "fasttext": "data/test-fasttext.npz",
-                "mllm": "data/test-mllm.npz",
-            },
-        },
-    }
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    args = parser.parse_args()
+    dataset = str(args.dataset)
+
+    e3 = ensemble3_keys(dataset)
+    model_name = f"mean({','.join(e3)})"
 
     scoreboard_path = Path("SCOREBOARD.md")
 
-    for split, cfg in splits.items():
-        print(f"\n=== {split.upper()} (MEAN ENSEMBLE) ===")
+    for split in ("train", "test"):
+        print(f"\n=== {dataset} | {split.upper()} (MEAN ENSEMBLE) ===")
 
-        y_true = load_csr(cfg["truth"])
-        preds = [load_csr(p) for p in cfg["models"].values()]
+        y_true = load_csr(str(truth_path(dataset, split)))
+        preds = [load_csr(str(pred_path(dataset, split, k))) for k in e3]
 
         print("Ground truth shape:", y_true.shape)
 
@@ -72,8 +69,9 @@ def main():
 
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model="mean",
-            dataset=split,
+            model=model_name,
+            dataset=dataset,
+            split=split,
             metrics=metrics,
             n_samples=n_used,
         )

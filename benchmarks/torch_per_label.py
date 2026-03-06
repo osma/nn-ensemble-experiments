@@ -7,12 +7,14 @@ import time
 # Allow running as a script: `uv run benchmarks/torch_per_label.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
+from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.metrics import (
     load_csr,
@@ -120,10 +122,8 @@ BEST_BATCH_SIZE = 256
 # Reproducibility for training shuffles / init
 TRAIN_SEED = 0
 
-# Initial per-source weights (must match train_preds/test_preds order below)
-# Desired mapping: mllm=0.1492, fasttext=0.6090, bonsai=0.2418
-# Current order: [bonsai, fasttext, mllm]
-INIT_SOURCE_WEIGHTS = torch.tensor([0.2418, 0.6090, 0.1492], dtype=torch.float32)
+# Initial per-source weights for the *yso* 3-way ensemble order: [bonsai, fasttext, mllm]
+YSo_INIT_SOURCE_WEIGHTS = torch.tensor([0.2418, 0.6090, 0.1492], dtype=torch.float32)
 
 
 def csr_to_dense_tensor(csr):
@@ -176,6 +176,8 @@ def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Te
 
 def train_and_evaluate(
     *,
+    dataset: str,
+    ensemble_keys: tuple[str, str, str],
     lr: float,
     weight_decay: float,
     batch_size: int,
@@ -211,16 +213,18 @@ def train_and_evaluate(
     n_models = X_train.shape[1]
     n_labels = X_train.shape[2]
 
-    if INIT_SOURCE_WEIGHTS.shape[0] != n_models:
-        raise ValueError(
-            f"INIT_SOURCE_WEIGHTS has length {INIT_SOURCE_WEIGHTS.shape[0]}, but X_train has n_models={n_models}. "
-            "Update INIT_SOURCE_WEIGHTS to match the number/order of base models."
-        )
+    init_weights: torch.Tensor | None = None
+    if dataset in {"yso-fi", "yso-en"} and ensemble_keys == ("bonsai", "fasttext", "mllm"):
+        if YSo_INIT_SOURCE_WEIGHTS.shape[0] != n_models:
+            raise ValueError(
+                f"YSo_INIT_SOURCE_WEIGHTS has length {YSo_INIT_SOURCE_WEIGHTS.shape[0]}, but X_train has n_models={n_models}."
+            )
+        init_weights = YSo_INIT_SOURCE_WEIGHTS
 
     model = PerLabelWeightedEnsemble(
         n_models=n_models,
         n_labels=n_labels,
-        init_model_weights=INIT_SOURCE_WEIGHTS,
+        init_model_weights=init_weights,
     ).to(DEVICE)
 
     optimizer = optim.AdamW(
@@ -368,17 +372,27 @@ def train_and_evaluate(
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    args = parser.parse_args()
+    dataset = str(args.dataset)
+
+    ensemble_keys = ensemble3_keys(dataset)
+    model_name = f"torch_per_label({','.join(ensemble_keys)})"
+
     scoreboard_path = Path("SCOREBOARD.md")
 
     print("Using device:", DEVICE)
     print("Loading training data...")
 
-    y_train_true = load_csr("data/train-output.npz")
-    train_preds = [
-        load_csr("data/train-bonsai.npz"),
-        load_csr("data/train-fasttext.npz"),
-        load_csr("data/train-mllm.npz"),
-    ]
+    y_train_true = load_csr(str(truth_path(dataset, "train")))
+    train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in ensemble_keys]
 
     # Keep X_train on CPU; move only minibatches to GPU.
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
@@ -397,12 +411,8 @@ def main():
     print("Loading test data...")
 
     # Keep y_test_true / Y_test on CPU (requested).
-    y_test_true = load_csr("data/test-output.npz")
-    test_preds = [
-        load_csr("data/test-bonsai.npz"),
-        load_csr("data/test-fasttext.npz"),
-        load_csr("data/test-mllm.npz"),
-    ]
+    y_test_true = load_csr(str(truth_path(dataset, "test")))
+    test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in ensemble_keys]
 
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
@@ -413,6 +423,8 @@ def main():
     )
 
     result = train_and_evaluate(
+        dataset=dataset,
+        ensemble_keys=ensemble_keys,
         lr=BEST_LR,
         weight_decay=BEST_WEIGHT_DECAY,
         batch_size=BEST_BATCH_SIZE,
@@ -451,16 +463,18 @@ def main():
     # Update scoreboard with the best result
     update_markdown_scoreboard(
         path=scoreboard_path,
-        model="torch_per_label",
-        dataset="train",
+        model=model_name,
+        dataset=dataset,
+        split="train",
         metrics=best_train_metrics,
         n_samples=best_n_used_train,
         epoch=best_epoch,
     )
     update_markdown_scoreboard(
         path=scoreboard_path,
-        model="torch_per_label",
-        dataset="test",
+        model=model_name,
+        dataset=dataset,
+        split="test",
         metrics=best_test_metrics,
         n_samples=best_n_used_test,
         epoch=best_epoch,

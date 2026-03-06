@@ -4,12 +4,14 @@ import sys
 # Allow running as a script: `uv run benchmarks/torch_mean_bias.py`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
+from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.metrics import (
     load_csr,
@@ -85,17 +87,27 @@ def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Te
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    args = parser.parse_args()
+    dataset = str(args.dataset)
+
+    e3 = ensemble3_keys(dataset)
+    model_name = f"torch_mean_bias({','.join(e3)})"
+
     scoreboard_path = Path("SCOREBOARD.md")
 
     print("Using device:", DEVICE)
     print("Loading training data...")
 
-    y_train_true = load_csr("data/train-output.npz")
-    train_preds = [
-        load_csr("data/train-bonsai.npz"),
-        load_csr("data/train-fasttext.npz"),
-        load_csr("data/train-mllm.npz"),
-    ]
+    y_train_true = load_csr(str(truth_path(dataset, "train")))
+    train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in e3]
 
     # Keep X_train on CPU; move only minibatches to GPU.
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
@@ -114,12 +126,8 @@ def main():
 
     print("Loading test data...")
 
-    y_test_true = load_csr("data/test-output.npz")
-    test_preds = [
-        load_csr("data/test-bonsai.npz"),
-        load_csr("data/test-fasttext.npz"),
-        load_csr("data/test-mllm.npz"),
-    ]
+    y_test_true = load_csr(str(truth_path(dataset, "test")))
+    test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in e3]
 
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
@@ -212,16 +220,18 @@ def main():
 
     update_markdown_scoreboard(
         path=scoreboard_path,
-        model="torch_mean_bias",
-        dataset="train",
+        model=model_name,
+        dataset=dataset,
+        split="train",
         metrics=best_train_metrics,
         n_samples=best_n_used_train,
         epoch=best_epoch,
     )
     update_markdown_scoreboard(
         path=scoreboard_path,
-        model="torch_mean_bias",
-        dataset="test",
+        model=model_name,
+        dataset=dataset,
+        split="test",
         metrics=best_test_metrics,
         n_samples=best_n_used_test,
         epoch=best_epoch,

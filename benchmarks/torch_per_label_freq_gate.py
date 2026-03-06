@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.metrics import (
     load_csr,
@@ -350,6 +351,8 @@ def _rms(t: torch.Tensor) -> float:
 
 def _train_one(
     *,
+    dataset: str,
+    ensemble_keys: tuple[str, str, str],
     alpha_max: float,
     lambda_delta: float,
     update_scoreboard: bool,
@@ -359,12 +362,8 @@ def _train_one(
     print("Using device:", DEVICE)
     print("Loading training data...")
 
-    y_train_true = load_csr("data/train-output.npz")
-    train_preds = [
-        load_csr("data/train-bonsai.npz"),
-        load_csr("data/train-fasttext.npz"),
-        load_csr("data/train-mllm.npz"),
-    ]
+    y_train_true = load_csr(str(truth_path(dataset, "train")))
+    train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in ensemble_keys]
 
     # Keep X_train on CPU; move only minibatches to GPU.
     X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
@@ -386,12 +385,8 @@ def _train_one(
 
     print("Loading test data...")
 
-    y_test_true = load_csr("data/test-output.npz")
-    test_preds = [
-        load_csr("data/test-bonsai.npz"),
-        load_csr("data/test-fasttext.npz"),
-        load_csr("data/test-mllm.npz"),
-    ]
+    y_test_true = load_csr(str(truth_path(dataset, "test")))
+    test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in ensemble_keys]
 
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
@@ -557,18 +552,21 @@ def _train_one(
     model.load_state_dict(best_state)
 
     if update_scoreboard:
+        model_name = f"torch_per_label_freq_gate({','.join(ensemble_keys)})"
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model="torch_per_label_freq_gate",
-            dataset="train",
+            model=model_name,
+            dataset=dataset,
+            split="train",
             metrics=best_train_metrics,
             n_samples=best_n_used_train,
             epoch=best_epoch,
         )
         update_markdown_scoreboard(
             path=scoreboard_path,
-            model="torch_per_label_freq_gate",
-            dataset="test",
+            model=model_name,
+            dataset=dataset,
+            split="test",
             metrics=best_test_metrics,
             n_samples=best_n_used_test,
             epoch=best_epoch,
@@ -613,6 +611,13 @@ def _train_one(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    parser.add_argument(
         "--sweep",
         action="store_true",
         help="Run a small grid over (alpha_max, lambda_delta) and keep the best by the early-stop metric.",
@@ -630,9 +635,13 @@ def main():
         help="Regularization strength for applied residual (single-run mode).",
     )
     args = parser.parse_args()
+    dataset = str(args.dataset)
+    ensemble_keys = ensemble3_keys(dataset)
 
     if not args.sweep:
         _train_one(
+            dataset=dataset,
+            ensemble_keys=ensemble_keys,
             alpha_max=float(args.alpha_max),
             lambda_delta=float(args.lambda_delta),
             update_scoreboard=True,
@@ -656,7 +665,13 @@ def main():
             print(f"SWEEP RUN | alpha_max={amax} | lambda_delta={lam}")
             print("=" * 80 + "\n")
 
-            r = _train_one(alpha_max=amax, lambda_delta=lam, update_scoreboard=False)
+            r = _train_one(
+                dataset=dataset,
+                ensemble_keys=ensemble_keys,
+                alpha_max=amax,
+                lambda_delta=lam,
+                update_scoreboard=False,
+            )
             results.append(r)
 
             if best is None or float(r["best_sel_metric"]) > float(best["best_sel_metric"]):
@@ -696,6 +711,8 @@ def main():
     # Re-run best config and update scoreboard
     print("\nRe-running best config to update SCOREBOARD.md...\n")
     _train_one(
+        dataset=dataset,
+        ensemble_keys=ensemble_keys,
         alpha_max=float(best["alpha_max"]),
         lambda_delta=float(best["lambda_delta"]),
         update_scoreboard=True,

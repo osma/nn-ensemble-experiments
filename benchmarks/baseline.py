@@ -2,44 +2,46 @@
 # Purpose: Individual base model benchmarks (no learning).
 from pathlib import Path
 
+import argparse
+
+from .datasets import all_pred_keys, pred_path, truth_path
 from .metrics import load_csr, ndcg_at_k, f1_at_k, update_markdown_scoreboard
 
 K = 1000
 
 
-def main():
-    splits = {
-        "train": {
-            "truth": "data/train-output.npz",
-            "models": {
-                "mllm": "data/train-mllm.npz",
-                "bonsai": "data/train-bonsai.npz",
-                "fasttext": "data/train-fasttext.npz",
-                "nn": "data/train-nn.npz",
-            },
-        },
-        "test": {
-            "truth": "data/test-output.npz",
-            "models": {
-                "mllm": "data/test-mllm.npz",
-                "bonsai": "data/test-bonsai.npz",
-                "fasttext": "data/test-fasttext.npz",
-                "nn": "data/test-nn.npz",
-            },
-        },
-    }
+def _maybe_load(path: Path):
+    if not path.exists():
+        return None
+    return load_csr(str(path))
 
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="yso-fi",
+        choices=["yso-fi", "yso-en", "koko"],
+        help="Dataset to benchmark",
+    )
+    args = parser.parse_args()
+
+    dataset = str(args.dataset)
     scoreboard_path = Path("SCOREBOARD.md")
 
-    for split, cfg in splits.items():
-        y_true = load_csr(cfg["truth"])
-        print(f"\n=== {split.upper()} ===")
+    for split in ("train", "test"):
+        y_true = load_csr(str(truth_path(dataset, split)))
+        print(f"\n=== {dataset} | {split.upper()} ===")
         print("Ground truth shape:", y_true.shape)
 
-        for model, path in cfg["models"].items():
-            y_pred = load_csr(path)
+        for model_key in all_pred_keys(dataset, split):
+            p = pred_path(dataset, split, model_key)
+            y_pred = _maybe_load(p)
+            if y_pred is None:
+                continue
 
-            print(f"\nModel: {model}")
+            print(f"\nModel: {model_key}")
             print("Predictions shape:", y_pred.shape)
 
             metrics = {}
@@ -53,8 +55,9 @@ def main():
 
             update_markdown_scoreboard(
                 path=scoreboard_path,
-                model=model,
-                dataset=split,
+                model=model_key,
+                dataset=dataset,
+                split=split,
                 metrics=metrics,
                 n_samples=n_used,
             )

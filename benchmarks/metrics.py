@@ -265,14 +265,25 @@ def update_markdown_scoreboard(
     path: Path,
     model: str,
     dataset: str,
+    split: str,
     metrics: dict[str, float],
     n_samples: int,
     epoch: int | None = None,
 ):
+    """
+    Update SCOREBOARD.md for a given (model, dataset) pair.
+
+    Args:
+        dataset: dataset name (e.g. yso-fi, yso-en, koko)
+        split: "train" or "test" (controls which columns are updated)
+    """
+    if split not in {"train", "test"}:
+        raise ValueError("split must be 'train' or 'test'")
+
     header = [
         "# Benchmark Scoreboard\n\n",
-        "| Model | Epoch | Train NDCG@10 | Train NDCG@1000 | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |\n",
-        "|-------|-------|---------------|----------------|-------------|----------------|-----------|\n",
+        "| Model | Dataset | Epoch | Train NDCG@10 | Train NDCG@1000 | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |\n",
+        "|-------|---------|-------|---------------|----------------|-------------|----------------|-----------|\n",
     ]
 
     rows: dict[str, dict[str, str]] = {}
@@ -283,26 +294,30 @@ def update_markdown_scoreboard(
                 continue
 
             cols = [c.strip() for c in line.strip("|").split("|")]
-            if len(cols) != 7:
+            if len(cols) != 8:
                 continue
 
             if cols[0] == "Model" or all(set(c) <= {"-"} for c in cols):
                 continue
 
-            rows[cols[0]] = {
+            key = f"{cols[0]}||{cols[1]}"
+            rows[key] = {
                 "model": cols[0],
-                "epoch": cols[1],
-                "train ndcg@10": cols[2],
-                "train ndcg@1000": cols[3],
-                "test ndcg@10": cols[4],
-                "test ndcg@1000": cols[5],
-                "test f1@5": cols[6],
+                "dataset": cols[1],
+                "epoch": cols[2],
+                "train ndcg@10": cols[3],
+                "train ndcg@1000": cols[4],
+                "test ndcg@10": cols[5],
+                "test ndcg@1000": cols[6],
+                "test f1@5": cols[7],
             }
 
+    key = f"{model}||{dataset}"
     row = rows.get(
-        model,
+        key,
         {
             "model": model,
+            "dataset": dataset,
             "epoch": "",
             "train ndcg@10": "",
             "train ndcg@1000": "",
@@ -312,39 +327,67 @@ def update_markdown_scoreboard(
         },
     )
 
-    prefix = "train" if dataset == "train" else "test"
     for k, v in metrics.items():
-        row[f"{prefix} {k}"] = f"{v:.6f}"
+        row[f"{split} {k}"] = f"{v:.6f}"
 
     if epoch is not None:
         row["epoch"] = str(epoch)
 
-    rows[model] = row
+    rows[key] = row
 
-    ordered_rows = sorted(rows.values(), key=lambda x: x["model"])
+    ordered_rows = sorted(rows.values(), key=lambda x: (x["model"], x["dataset"]))
 
     main_table = [
-        f"| {r['model']} | {r.get('epoch','')} | {r['train ndcg@10']} | {r['train ndcg@1000']} | "
+        f"| {r['model']} | {r['dataset']} | {r.get('epoch','')} | {r['train ndcg@10']} | {r['train ndcg@1000']} | "
         f"{r['test ndcg@10']} | {r['test ndcg@1000']} | {r['test f1@5']} |\n"
         for r in ordered_rows
     ]
 
+    # --- Aggregate rows by model (average across datasets) for Top-10 lists ---
+    by_model: dict[str, list[dict[str, str]]] = {}
+    for r in ordered_rows:
+        by_model.setdefault(r["model"], []).append(r)
+
+    def _avg_metric(rows_for_model: list[dict[str, str]], k: str) -> str:
+        vals: list[float] = []
+        for rr in rows_for_model:
+            v = _parse_float(rr.get(k, ""))
+            if np.isfinite(v):
+                vals.append(float(v))
+        if not vals:
+            return ""
+        return f"{float(np.mean(vals)):.6f}"
+
+    aggregated_rows: list[dict[str, str]] = []
+    for m, rs in by_model.items():
+        aggregated_rows.append(
+            {
+                "model": m,
+                "epoch": "",  # not meaningful when averaging across datasets
+                "train ndcg@10": _avg_metric(rs, "train ndcg@10"),
+                "train ndcg@1000": _avg_metric(rs, "train ndcg@1000"),
+                "test ndcg@10": _avg_metric(rs, "test ndcg@10"),
+                "test ndcg@1000": _avg_metric(rs, "test ndcg@1000"),
+                "test f1@5": _avg_metric(rs, "test f1@5"),
+            }
+        )
+
     top10_ndcg10 = _render_top10_table(
-        ordered_rows,
+        aggregated_rows,
         sort_key="test ndcg@10",
-        title="Top 10 Models by Test NDCG@10",
+        title="Top 10 Models by Avg Test NDCG@10 (across datasets)",
     )
 
     top10_ndcg1000 = _render_top10_table(
-        ordered_rows,
+        aggregated_rows,
         sort_key="test ndcg@1000",
-        title="Top 10 Models by Test NDCG@1000",
+        title="Top 10 Models by Avg Test NDCG@1000 (across datasets)",
     )
 
     top10_f1 = _render_top10_table(
-        ordered_rows,
+        aggregated_rows,
         sort_key="test f1@5",
-        title="Top 10 Models by Test F1@5",
+        title="Top 10 Models by Avg Test F1@5 (across datasets)",
     )
 
     path.write_text(
