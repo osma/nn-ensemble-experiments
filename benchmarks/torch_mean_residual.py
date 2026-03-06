@@ -54,6 +54,7 @@ EARLY_STOP_SEED = 1337
 LR = 0.003
 WEIGHT_DECAY = 0.0  # rely on explicit residual penalty
 LAMBDA_DELTA_L2 = 1e-2  # strength of shrinkage of per-label residuals toward 0
+LAMBDA_BIAS_L2 = 1e-3  # shrinkage for per-label bias (important for large label spaces)
 
 # Reproducibility
 TRAIN_SEED = 0
@@ -118,6 +119,10 @@ class MeanResidualEnsemble(nn.Module):
         # Mean squared residual for scale-invariant regularization.
         return (self.delta_w ** 2).mean()
 
+    def bias_l2(self) -> torch.Tensor:
+        # Mean squared bias for scale-invariant regularization.
+        return (self.bias ** 2).mean()
+
 
 def _sync_if_cuda() -> None:
     if DEVICE.type == "cuda":
@@ -174,6 +179,12 @@ def main() -> None:
         help="L2 shrinkage strength for per-label residual weights (delta_w)",
     )
     parser.add_argument(
+        "--lambda-bias",
+        type=float,
+        default=LAMBDA_BIAS_L2,
+        help="L2 shrinkage strength for per-label bias (bias)",
+    )
+    parser.add_argument(
         "--print-delta",
         action="store_true",
         help="Print delta_w diagnostics (delta_l2 and per-model mean |delta|) each epoch",
@@ -181,6 +192,7 @@ def main() -> None:
     args = parser.parse_args()
     dataset = str(args.dataset)
     lambda_delta = float(args.lambda_delta)
+    lambda_bias = float(args.lambda_bias)
     print_delta = bool(args.print_delta)
 
     # Deterministic-ish
@@ -265,7 +277,9 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 logits = model(xb)
                 loss_main = criterion(logits, yb)
-                loss_reg = lambda_delta * model.delta_l2()
+                loss_reg_delta = lambda_delta * model.delta_l2()
+                loss_reg_bias = lambda_bias * model.bias_l2()
+                loss_reg = loss_reg_delta + loss_reg_bias
                 loss = loss_main + loss_reg
                 loss.backward()
                 optimizer.step()
@@ -296,16 +310,24 @@ def main() -> None:
                 mean_abs_delta_per_model = (
                     model.delta_w.detach().abs().mean(dim=1).cpu().numpy()
                 )
+
+                bias_l2 = float(model.bias_l2().detach().cpu().item())
+                mean_abs_bias = float(model.bias.detach().abs().mean().cpu().item())
+                max_abs_bias = float(model.bias.detach().abs().max().cpu().item())
+
             diag = (
                 " | "
                 f"delta_l2={delta_l2:.6e} "
                 f"mean_abs_delta=[{mean_abs_delta_per_model[0]:.3e},"
                 f"{mean_abs_delta_per_model[1]:.3e},"
-                f"{mean_abs_delta_per_model[2]:.3e}]"
+                f"{mean_abs_delta_per_model[2]:.3e}] "
+                f"bias_l2={bias_l2:.6e} "
+                f"mean_abs_bias={mean_abs_bias:.3e} "
+                f"max_abs_bias={max_abs_bias:.3e}"
             )
 
         print(
-            f"[lambda_delta={lambda_delta:g}] "
+            f"[lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g}] "
             f"Epoch {epoch:02d} | "
             f"loss={loss.item():.6f} (bce={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
