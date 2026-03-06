@@ -355,12 +355,27 @@ def update_markdown_scoreboard(
     ]
 
     # --- Aggregate rows by model family (average across datasets) for Top-10 lists ---
-    # Model IDs include ensemble components, e.g. "torch_mean(a,b,c)" vs
-    # "torch_mean(x,y,z)". For Top-10 we want to aggregate by family ("torch_mean")
-    # across all datasets.
+    # Policy for Top-10 lists:
+    #   - Only include model families that have results for *all* datasets present in the scoreboard
+    #     (avoids ranking models that were only run on a subset).
+    #   - Exclude base models by default, except keep "nn" (explicitly requested).
+    #
+    # Rationale:
+    #   Base model rows (bonsai/fasttext/mllm/...) are useful references in the main table, but they
+    #   clutter global leaderboards. "nn" is kept because it's present across all datasets and is
+    #   a meaningful reference baseline.
+    required_datasets = sorted({r["dataset"] for r in ordered_rows})
+    keep_base_families = {"nn"}
+
     by_model: dict[str, list[dict[str, str]]] = {}
     for r in ordered_rows:
         fam = _model_family(r["model"])
+
+        # Heuristic: ensembles use parentheses, base models do not.
+        is_ensemble_row = "(" in r["model"]
+        if not is_ensemble_row and fam not in keep_base_families:
+            continue
+
         by_model.setdefault(fam, []).append(r)
 
     def _avg_metric(rows_for_model: list[dict[str, str]], k: str) -> str:
@@ -375,6 +390,10 @@ def update_markdown_scoreboard(
 
     aggregated_rows: list[dict[str, str]] = []
     for m, rs in by_model.items():
+        fam_datasets = sorted({rr["dataset"] for rr in rs})
+        if fam_datasets != required_datasets:
+            continue
+
         aggregated_rows.append(
             {
                 "model": m,

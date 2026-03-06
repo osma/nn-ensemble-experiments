@@ -52,10 +52,26 @@ It contains:
 - Test F1@5
 - Top‑10 rankings by each metric
 
-To regenerate everything from scratch:
+To update the scoreboard:
 
 ```bash
 ./regenerate_scoreboard.sh
+```
+
+By default this runs a **small, fast** benchmark set and **updates incrementally**
+(it does not delete `SCOREBOARD.md`).
+
+Common workflows:
+
+```bash
+# Full clean rebuild
+./regenerate_scoreboard.sh --clean
+
+# Single dataset
+./regenerate_scoreboard.sh --dataset yso-fi
+
+# Only a subset of benchmarks (comma-separated module names under benchmarks.*)
+./regenerate_scoreboard.sh --models baseline,mean_weighted,torch_per_label
 ```
 
 ---

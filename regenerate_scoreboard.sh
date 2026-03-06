@@ -1,31 +1,66 @@
 #!/usr/bin/env sh
 set -eu
 
-echo "Regenerating SCOREBOARD.md..."
+# Incremental by default:
+# - We do NOT delete SCOREBOARD.md unless --clean is provided.
+# - We run a small default benchmark set to speed up iteration.
+#
+# Usage:
+#   ./regenerate_scoreboard.sh                # all datasets, default models
+#   ./regenerate_scoreboard.sh --clean        # rebuild from scratch
+#   ./regenerate_scoreboard.sh --dataset yso-fi
+#   ./regenerate_scoreboard.sh --models baseline,mean_weighted,torch_per_label
+#
+# Notes:
+# - "models" are benchmark modules under `benchmarks.*` (without the prefix).
+# - The default suite is intentionally small and focused on best-performing models.
 
-# Remove old scoreboard
-rm -f SCOREBOARD.md
+CLEAN=0
+DATASETS="yso-fi yso-en koko"
+MODELS="baseline mean_weighted torch_per_label"
 
-for ds in yso-fi yso-en koko; do
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --clean)
+      CLEAN=1
+      shift
+      ;;
+    --dataset)
+      DATASETS="$2"
+      shift 2
+      ;;
+    --models)
+      MODELS=$(printf "%s" "$2" | tr ',' ' ')
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+echo "Updating SCOREBOARD.md (incremental=${CLEAN}==0)..."
+echo "Datasets: $DATASETS"
+echo "Models:   $MODELS"
+
+if [ "$CLEAN" -eq 1 ]; then
+  echo "Cleaning SCOREBOARD.md..."
+  rm -f SCOREBOARD.md
+fi
+
+for ds in $DATASETS; do
   echo ""
   echo "============================="
   echo "DATASET: $ds"
   echo "============================="
 
-  # Baselines
-  uv run python -m benchmarks.baseline --dataset "$ds"
-
-  # Non-torch ensembles (3-way as defined in benchmarks/datasets.py)
-  uv run python -m benchmarks.mean --dataset "$ds"
-  uv run python -m benchmarks.mean_weighted --dataset "$ds"
-
-  # Torch-based ensembles (3-way as defined in benchmarks/datasets.py)
-  uv run python -m benchmarks.torch_mean --dataset "$ds"
-  uv run python -m benchmarks.torch_mean_bias --dataset "$ds"
-  uv run python -m benchmarks.torch_per_label --dataset "$ds"
-  uv run python -m benchmarks.torch_per_label_conv --dataset "$ds"
-  uv run python -m benchmarks.torch_per_label_freq_gate --dataset "$ds"
-  uv run python -m benchmarks.torch_per_label_freq_reg --dataset "$ds"
+  for m in $MODELS; do
+    echo ""
+    echo "---- Running: benchmarks.$m (dataset=$ds) ----"
+    uv run python -m "benchmarks.$m" --dataset "$ds"
+  done
 done
 
-echo "Done. SCOREBOARD.md regenerated."
+echo ""
+echo "Done. SCOREBOARD.md updated."
