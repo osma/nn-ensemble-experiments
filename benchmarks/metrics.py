@@ -217,6 +217,17 @@ def _parse_float(v: str) -> float:
         return float("-inf")
 
 
+def _model_family(model: str) -> str:
+    """
+    Normalize a model identifier to its "family" name for aggregation.
+
+    Examples:
+      - "torch_mean(bonsai,fasttext,mllm)" -> "torch_mean"
+      - "mean_weighted(bonsai_gemma3,bonsai_ovis2,mllm)" -> "mean_weighted"
+    """
+    return model.split("(", 1)[0].strip()
+
+
 def _render_top10_table(
     rows: list[dict[str, str]],
     sort_key: str,
@@ -343,10 +354,14 @@ def update_markdown_scoreboard(
         for r in ordered_rows
     ]
 
-    # --- Aggregate rows by model (average across datasets) for Top-10 lists ---
+    # --- Aggregate rows by model family (average across datasets) for Top-10 lists ---
+    # Model IDs include ensemble components, e.g. "torch_mean(a,b,c)" vs
+    # "torch_mean(x,y,z)". For Top-10 we want to aggregate by family ("torch_mean")
+    # across all datasets.
     by_model: dict[str, list[dict[str, str]]] = {}
     for r in ordered_rows:
-        by_model.setdefault(r["model"], []).append(r)
+        fam = _model_family(r["model"])
+        by_model.setdefault(fam, []).append(r)
 
     def _avg_metric(rows_for_model: list[dict[str, str]], k: str) -> str:
         vals: list[float] = []
