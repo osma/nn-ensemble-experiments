@@ -62,17 +62,24 @@ TRAIN_SEED = 0
 NEG_PER_DOC = 256  # sampled negatives outside candidate set (0 disables)
 NEG_SEED = 4242
 HARD_NEG_TOPK = 2048  # per-row top-k mined from current logits (before filtering)
-LAMBDA_BIAS_L2 = 1e-3  # bias shrinkage (helps on very large label spaces)
+
+# Regularization (important for large label spaces)
+LAMBDA_BIAS_L2 = 1e-3  # shrinkage for per-label bias
+LAMBDA_DELTA_L2 = 1e-2  # shrinkage for per-label residual weights (delta_w) toward 0
 
 
 class TorchMeanCandidate(nn.Module):
     """
-    Mean ensemble in logit space with learnable per-label bias.
+    Mean-like ensemble with per-label residual weights + bias, trained with
+    candidate/truth/hard-negative sampling.
 
-    Input:
-        x: (batch, M=3, L) log1p-preprocessed non-negative scores
-    Output:
-        logits: (batch, L)
+    Form:
+        logits[b, l] = sum_m (w_global[m] + delta_w[m, l]) * x[b, m, l] + bias[l]
+
+    Notes:
+    - w_global is initialized to uniform mean weights and is learnable.
+    - delta_w starts at 0 and is strongly regularized to keep behavior close to mean.
+    - bias is also regularized.
     """
 
     def __init__(self, n_models: int, n_labels: int):
@@ -81,7 +88,21 @@ class TorchMeanCandidate(nn.Module):
             raise ValueError("This experimental model is intended for 3-way ensembles only")
         self.n_models = int(n_models)
         self.n_labels = int(n_labels)
+
+        # Global mean weights (learnable)
+        self.global_w = nn.Parameter(
+            torch.full((n_models,), 1.0 / float(n_models), dtype=torch.float32)
+        )
+
+        # Per-label residual weights (start at 0)
+        self.delta_w = nn.Parameter(torch.zeros((n_models, n_labels), dtype=torch.float32))
+
+        # Per-label bias
         self.bias = nn.Parameter(torch.zeros((n_labels,), dtype=torch.float32))
+
+    def effective_w(self) -> torch.Tensor:
+        # (M, L)
+        return self.global_w[:, None] + self.delta_w
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
@@ -90,8 +111,15 @@ class TorchMeanCandidate(nn.Module):
             raise ValueError(
                 f"Expected x with (M={self.n_models}, L={self.n_labels}), got {tuple(x.shape)}"
             )
-        mean = x.mean(dim=1)  # (B, L)
-        return mean + self.bias
+        w_eff = self.effective_w()  # (M, L)
+        logits = (x * w_eff.unsqueeze(0)).sum(dim=1) + self.bias  # (B, L)
+        return logits
+
+    def delta_l2(self) -> torch.Tensor:
+        return (self.delta_w ** 2).mean()
+
+    def bias_l2(self) -> torch.Tensor:
+        return (self.bias ** 2).mean()
 
 
 def _sync_if_cuda() -> None:
@@ -341,17 +369,26 @@ def main() -> None:
         default=LAMBDA_BIAS_L2,
         help="L2 shrinkage strength for per-label bias (mean(bias^2)).",
     )
+    parser.add_argument(
+        "--lambda-delta",
+        type=float,
+        default=LAMBDA_DELTA_L2,
+        help="L2 shrinkage strength for per-label residual weights (mean(delta_w^2)).",
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
     neg_per_doc = int(args.neg_per_doc)
     hard_topk = int(args.hard_topk)
     lambda_bias = float(args.lambda_bias)
+    lambda_delta = float(args.lambda_delta)
     if neg_per_doc < 0:
         raise ValueError("--neg-per-doc must be >= 0")
     if hard_topk < 0:
         raise ValueError("--hard-topk must be >= 0")
     if lambda_bias < 0:
         raise ValueError("--lambda-bias must be >= 0")
+    if lambda_delta < 0:
+        raise ValueError("--lambda-delta must be >= 0")
 
     torch.manual_seed(TRAIN_SEED)
     if DEVICE.type == "cuda":
@@ -459,8 +496,9 @@ def main() -> None:
                     continue
 
                 loss_main = _masked_bce_with_logits(logits_sel, targets_sel, mask=mask)
-                loss_reg = lambda_bias * (model.bias ** 2).mean()
-                loss = loss_main + loss_reg
+                loss_reg_bias = lambda_bias * model.bias_l2()
+                loss_reg_delta = lambda_delta * model.delta_l2()
+                loss = loss_main + loss_reg_bias + loss_reg_delta
                 loss.backward()
                 optimizer.step()
 
@@ -485,7 +523,8 @@ def main() -> None:
         test_metrics["f1@5"] = f1
 
         print(
-            f"[neg_per_doc={neg_per_doc} hard_topk={hard_topk} lambda_bias={lambda_bias:g}] "
+            f"[neg_per_doc={neg_per_doc} hard_topk={hard_topk} "
+            f"lambda_bias={lambda_bias:g} lambda_delta={lambda_delta:g}] "
             f"Epoch {epoch:02d} | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
