@@ -62,8 +62,6 @@ TRAIN_SEED = 0
 NEG_PER_DOC = 256  # sampled negatives outside candidate set (0 disables)
 NEG_SEED = 4242
 
-# For evaluation: logits for non-candidates
-NON_CANDIDATE_LOGIT = -1e9
 
 
 class TorchMeanCandidate(nn.Module):
@@ -170,21 +168,22 @@ def _sample_negatives(
     return _sample_negatives(n_labels=n_labels, candidate_idx=candidate_idx, k=k, rng=rng)
 
 
-def _gather_logits_and_targets(
+def _gather_logits_targets_and_mask(
     *,
     logits_full: torch.Tensor,   # (B, L) on DEVICE
     y_true_full: torch.Tensor,   # (B, L) on DEVICE
     cand_list: list[np.ndarray], # length B, CPU arrays of indices
     neg_per_doc: int,
     rng: np.random.Generator,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Build a packed (B, Kmax) tensor for logits and targets by selecting per-row
-    candidate columns + sampled negatives, padded with a sentinel.
+    candidate columns + sampled negatives.
 
     Returns:
         logits_packed: (B, Kmax) float
         targets_packed: (B, Kmax) float
+        mask: (B, Kmax) bool mask for valid (non-padding) positions
     """
     device = logits_full.device
     bsz, n_labels = logits_full.shape
@@ -208,10 +207,11 @@ def _gather_logits_and_targets(
 
     if max_k == 0:
         # No candidates anywhere in this batch -> return empty; caller should skip
-        empty = torch.empty((bsz, 0), device=device, dtype=logits_full.dtype)
-        return empty, empty
+        empty_f = torch.empty((bsz, 0), device=device, dtype=logits_full.dtype)
+        empty_b = torch.empty((bsz, 0), device=device, dtype=torch.bool)
+        return empty_f, empty_f, empty_b
 
-    # Pad with -1 indices (masked later)
+    # Pad with -1 indices
     idx_padded = torch.full((bsz, max_k), -1, device=device, dtype=torch.int64)
     for i, idx in enumerate(selected_per_row):
         if idx.size == 0:
@@ -219,18 +219,17 @@ def _gather_logits_and_targets(
         idx_t = torch.from_numpy(idx).to(device=device, dtype=torch.int64)
         idx_padded[i, : idx_t.numel()] = idx_t
 
-    # Gather with masking
-    valid = idx_padded >= 0
+    mask = idx_padded >= 0
     safe_idx = torch.clamp(idx_padded, min=0)
 
     logits = torch.gather(logits_full, dim=1, index=safe_idx)
     targets = torch.gather(y_true_full, dim=1, index=safe_idx)
 
-    # Mask padded positions: logits arbitrary; targets 0 and will be masked out of loss
-    targets = torch.where(valid, targets, torch.zeros_like(targets))
-    logits = torch.where(valid, logits, torch.zeros_like(logits))
+    # Fill padding values to keep tensors finite; mask controls loss contribution
+    logits = torch.where(mask, logits, torch.zeros_like(logits))
+    targets = torch.where(mask, targets, torch.zeros_like(targets))
 
-    return logits, targets
+    return logits, targets, mask
 
 
 def _masked_bce_with_logits(
@@ -248,15 +247,9 @@ def _masked_bce_with_logits(
     return loss.sum() / denom
 
 
-def _predict_candidates_only(
-    *,
-    model: nn.Module,
-    x_cpu: torch.Tensor,         # (N, M, L) on CPU
-    cand_rows: list[np.ndarray], # length N, CPU arrays
-    n_labels: int,
-) -> torch.Tensor:
+def _predict_in_batches(model: nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
     """
-    Predict logits for candidate labels only; non-candidates get very negative logits.
+    Predict logits for all labels (dense), moving only minibatches to DEVICE.
     Returns dense (N, L) CPU tensor for use with ndcg_at_k_dense / f1_at_k_dense.
     """
     model.eval()
@@ -268,23 +261,11 @@ def _predict_candidates_only(
     )
 
     outs: list[torch.Tensor] = []
-    offset = 0
     with torch.no_grad():
         for (xb,) in loader:
-            bsz = xb.shape[0]
             xb = xb.to(DEVICE, non_blocking=True)
-            logits_full = model(xb)  # (B, L)
-
-            # Start with all very negative
-            out = torch.full((bsz, n_labels), NON_CANDIDATE_LOGIT, device=logits_full.device)
-            for i in range(bsz):
-                idx = cand_rows[offset + i]
-                if idx.size == 0:
-                    continue
-                idx_t = torch.from_numpy(idx).to(device=logits_full.device, dtype=torch.int64)
-                out[i].index_copy_(0, idx_t, logits_full[i].index_select(0, idx_t))
-            outs.append(out.detach().cpu())
-            offset += bsz
+            logits = model(xb)
+            outs.append(logits.detach().cpu())
 
     return torch.cat(outs, dim=0)
 
@@ -329,17 +310,18 @@ def main() -> None:
     train_preds_csr = [load_csr(str(pred_path(dataset, "train", k))) for k in e3]
     test_preds_csr = [load_csr(str(pred_path(dataset, "test", k))) for k in e3]
 
-    # Candidate sets derived from sparse structures (fast; no densification needed)
-    train_cand_rows = _row_union_indices(train_preds_csr[0], train_preds_csr[1], train_preds_csr[2])
-    test_cand_rows = _row_union_indices(test_preds_csr[0], test_preds_csr[1], test_preds_csr[2])
+    # Candidate sets derived from sparse structures (fast; no densification needed).
+    # Used ONLY for training loss (to avoid dense BCE pathologies on very sparse inputs).
+    train_cand_rows = _row_union_indices(
+        train_preds_csr[0], train_preds_csr[1], train_preds_csr[2]
+    )
 
     # Dense input features for the model (still OK; model is simple)
     X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds_csr], dim=1)
     X_test = torch.stack([csr_to_log1p_tensor(p) for p in test_preds_csr], dim=1)
 
-    # Dense targets for loss (we will gather only candidate/negative columns)
+    # Dense targets for training loss (we will gather only candidate/negative columns)
     Y_train = torch.from_numpy(y_train_true_csr.toarray()).float()
-    Y_test = torch.from_numpy(y_test_true_csr.toarray()).float()
 
     n_models = int(X_train.shape[1])
     n_labels = int(X_train.shape[2])
@@ -399,7 +381,7 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
 
                 logits_full = model(xb)  # (B, L)
-                logits_sel, targets_sel = _gather_logits_and_targets(
+                logits_sel, targets_sel, mask = _gather_logits_targets_and_mask(
                     logits_full=logits_full,
                     y_true_full=yb,
                     cand_list=cand_list,
@@ -409,31 +391,21 @@ def main() -> None:
                 if logits_sel.numel() == 0:
                     continue
 
-                mask = (logits_sel != 0.0) | (targets_sel != 0.0)
                 loss = _masked_bce_with_logits(logits_sel, targets_sel, mask=mask)
                 loss.backward()
                 optimizer.step()
 
-        # --- Early stop metric: train subset NDCG@1000 (candidates only) ---
+        # --- Early stop metric: train subset NDCG@1000 (FULL LABELS) ---
+        # Candidate sets are used for training loss only; metrics remain comparable to other models.
         with _Timer() as t_pred_train:
-            train_eval_scores = _predict_candidates_only(
-                model=model,
-                x_cpu=X_train_eval,
-                cand_rows=train_eval_cand_rows,
-                n_labels=n_labels,
-            )
+            train_eval_scores = _predict_in_batches(model=model, x_cpu=X_train_eval)
         train_ndcg1000, n_used_train_eval = ndcg_at_k_dense(
             y_train_true_eval_csr, train_eval_scores, k=1000
         )
 
-        # --- Test metrics (candidates only) ---
+        # --- Test metrics (FULL LABELS) ---
         with _Timer() as t_pred_test:
-            test_scores = _predict_candidates_only(
-                model=model,
-                x_cpu=X_test,
-                cand_rows=test_cand_rows,
-                n_labels=n_labels,
-            )
+            test_scores = _predict_in_batches(model=model, x_cpu=X_test)
 
         test_metrics: dict[str, float] = {}
         n_used_test: int | None = None
@@ -461,17 +433,14 @@ def main() -> None:
             best_epoch = epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
-            # Full train/test metrics at best epoch
-            full_train_scores = _predict_candidates_only(
-                model=model,
-                x_cpu=X_train,
-                cand_rows=train_cand_rows,
-                n_labels=n_labels,
-            )
+            # Full train/test metrics at best epoch (FULL LABELS)
+            full_train_scores = _predict_in_batches(model=model, x_cpu=X_train)
             best_train_metrics = {}
             n_used_train_full: int | None = None
             for k in K_VALUES:
-                ndcg, n_used_train_full = ndcg_at_k_dense(y_train_true_csr, full_train_scores, k=k)
+                ndcg, n_used_train_full = ndcg_at_k_dense(
+                    y_train_true_csr, full_train_scores, k=k
+                )
                 best_train_metrics[f"ndcg@{k}"] = ndcg
             best_n_used_train = int(n_used_train_full or 0)
 
