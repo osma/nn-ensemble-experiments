@@ -26,7 +26,7 @@
 | torch_mean_bias(bonsai,fasttext,mllm) | yso-en | 10 | 0.674754 | 0.744848 | 0.626509 | 0.693832 | 0.445743 |
 | torch_mean_bias(bonsai,fasttext,mllm) | yso-fi | 10 | 0.731111 | 0.805586 | 0.677608 | 0.767045 | 0.518328 |
 | torch_mean_bias(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 7 | 0.416765 | 0.481197 | 0.336639 | 0.384107 | 0.247349 |
-| torch_per_label(bonsai,fasttext,mllm) | yso-en | 10 | 0.594939 | 0.724244 | 0.500858 | 0.667106 | 0.343190 |
+| torch_per_label(bonsai,fasttext,mllm) | yso-en | 19 | 0.626856 | 0.741188 | 0.515139 | 0.671659 | 0.344941 |
 | torch_per_label(bonsai,fasttext,mllm) | yso-fi | 5 | 0.725988 | 0.823065 | 0.710171 | 0.816454 | 0.544132 |
 | torch_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.404260 | 0.526167 | 0.336026 | 0.446946 | 0.245734 |
 | torch_per_label_conv(bonsai,fasttext,mllm) | yso-en | 10 | 0.504217 | 0.672545 | 0.406139 | 0.604129 | 0.275098 |
@@ -49,8 +49,8 @@
 | 1 | torch_mean | 0.552181 | 0.660788 | 0.405533 |
 | 2 | mean_weighted | 0.549679 | 0.659789 | 0.402591 |
 | 3 | torch_mean_bias | 0.546919 | 0.614995 | 0.403807 |
-| 4 | nn | 0.520130 | 0.602356 | 0.383158 |
-| 5 | torch_per_label | 0.515685 | 0.643502 | 0.377685 |
+| 4 | torch_per_label | 0.520445 | 0.645020 | 0.378269 |
+| 5 | nn | 0.520130 | 0.602356 | 0.383158 |
 | 6 | torch_per_label_l1_delta | 0.514321 | 0.642814 | 0.378786 |
 | 7 | torch_per_label_freq_reg | 0.490825 | 0.626392 | 0.355337 |
 | 8 | torch_per_label_conv | 0.482759 | 0.622053 | 0.352550 |
@@ -63,7 +63,7 @@
 |------|-------|----------------|--------------|-----------|
 | 1 | torch_mean | 0.660788 | 0.552181 | 0.405533 |
 | 2 | mean_weighted | 0.659789 | 0.549679 | 0.402591 |
-| 3 | torch_per_label | 0.643502 | 0.515685 | 0.377685 |
+| 3 | torch_per_label | 0.645020 | 0.520445 | 0.378269 |
 | 4 | torch_per_label_l1_delta | 0.642814 | 0.514321 | 0.378786 |
 | 5 | torch_per_label_freq_reg | 0.626392 | 0.490825 | 0.355337 |
 | 6 | torch_per_label_conv | 0.622053 | 0.482759 | 0.352550 |
@@ -81,7 +81,7 @@
 | 3 | mean_weighted | 0.402591 | 0.549679 | 0.659789 |
 | 4 | nn | 0.383158 | 0.520130 | 0.602356 |
 | 5 | torch_per_label_l1_delta | 0.378786 | 0.514321 | 0.642814 |
-| 6 | torch_per_label | 0.377685 | 0.515685 | 0.643502 |
+| 6 | torch_per_label | 0.378269 | 0.520445 | 0.645020 |
 | 7 | torch_per_label_freq_reg | 0.355337 | 0.490825 | 0.626392 |
 | 8 | torch_per_label_conv | 0.352550 | 0.482759 | 0.622053 |
 | 9 | torch_per_label_freq_gate | 0.340186 | 0.465417 | 0.610414 |
