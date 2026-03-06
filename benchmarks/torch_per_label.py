@@ -1,6 +1,7 @@
 # STATUS: ACTIVE (recommended base model)
 # Purpose: Best-performing per-label linear ensemble trained with BCE on raw logits.
 from pathlib import Path
+import json
 import sys
 import time
 
@@ -104,7 +105,7 @@ class PerLabelWeightedEnsemble(nn.Module):
 # ============================
 
 DEVICE = get_device()
-EPOCHS = 10
+EPOCHS = 20
 K_VALUES = (10, 1000)
 
 PATIENCE = 2
@@ -193,6 +194,9 @@ def train_and_evaluate(
     Train a model with given hyperparameters and return the best snapshot
     selected by TRAIN subset NDCG@1000 (early stopping metric).
 
+    Also returns a diagnostics payload (JSON-serializable) for the best epoch
+    to help understand cross-dataset behavior.
+
     Returns dict with:
       - best_metric (float): best train subset NDCG@1000
       - best_epoch (int)
@@ -201,6 +205,7 @@ def train_and_evaluate(
       - best_n_used_train (int)
       - best_n_used_test (int)
       - timing (dict[str,float]) rough totals
+      - diagnostics (dict[str,object]) best-epoch diagnostics
     """
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
@@ -258,6 +263,7 @@ def train_and_evaluate(
     best_test_metrics: dict[str, float] | None = None
     best_n_used_train: int | None = None
     best_n_used_test: int | None = None
+    best_diag: dict[str, object] | None = None
     epochs_no_improve = 0
 
     t_total_train_step = 0.0
@@ -344,6 +350,65 @@ def train_and_evaluate(
 
             best_test_metrics = test_metrics.copy()
             best_n_used_test = int(n_used_test or 0)
+
+            # ---- Best-epoch diagnostics (weights + bias distributions) ----
+            with torch.no_grad():
+                w = model.weights.detach().cpu()  # (M, L)
+                b = model.bias.detach().cpu()  # (L,)
+
+            def _tensor_stats(t: torch.Tensor) -> dict[str, float]:
+                t64 = t.to(dtype=torch.float64)
+                flat = t64.reshape(-1)
+                if flat.numel() == 0:
+                    return {"n": 0.0}
+                q = torch.quantile(flat, torch.tensor([0.0, 0.01, 0.05, 0.50, 0.95, 0.99, 1.0], dtype=torch.float64))
+                return {
+                    "n": float(flat.numel()),
+                    "mean": float(flat.mean().item()),
+                    "std": float(flat.std(unbiased=False).item()),
+                    "min": float(q[0].item()),
+                    "p01": float(q[1].item()),
+                    "p05": float(q[2].item()),
+                    "p50": float(q[3].item()),
+                    "p95": float(q[4].item()),
+                    "p99": float(q[5].item()),
+                    "max": float(q[6].item()),
+                }
+
+            # Per-model weight means over labels (M,)
+            w_mean_per_model = w.mean(dim=1).numpy().tolist()
+            w_abs_mean_per_model = w.abs().mean(dim=1).numpy().tolist()
+
+            # Per-label "dominant model" frequency
+            dominant = torch.argmax(w, dim=0)  # (L,)
+            dominant_counts = torch.bincount(dominant, minlength=w.shape[0]).to(dtype=torch.int64)
+            dominant_frac = (dominant_counts.to(dtype=torch.float64) / float(w.shape[1])).numpy().tolist()
+
+            best_diag = {
+                "dataset": dataset,
+                "ensemble_keys": list(ensemble_keys),
+                "selected_by": "train_subset_ndcg@1000",
+                "best_epoch": int(epoch),
+                "best_train_subset_ndcg@1000": float(train_ndcg1000),
+                "hyperparams": {"lr": float(lr), "weight_decay": float(weight_decay), "batch_size": int(batch_size)},
+                "shapes": {"n_models": int(w.shape[0]), "n_labels": int(w.shape[1])},
+                "weights": {
+                    "overall": _tensor_stats(w),
+                    "per_model_mean_over_labels": w_mean_per_model,
+                    "per_model_mean_abs_over_labels": w_abs_mean_per_model,
+                    "dominant_model_frac_over_labels": dominant_frac,
+                    "n_negative": int((w < 0).sum().item()),
+                },
+                "bias": {
+                    "overall": _tensor_stats(b),
+                },
+                "metrics_at_best_epoch": {
+                    "train_subset": {"ndcg@1000": float(train_ndcg1000)},
+                    "train_full": {k: float(v) for k, v in best_train_metrics.items()},
+                    "test": {k: float(v) for k, v in best_test_metrics.items()},
+                },
+            }
+
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
@@ -357,6 +422,7 @@ def train_and_evaluate(
     assert best_test_metrics is not None
     assert best_n_used_train is not None
     assert best_n_used_test is not None
+    assert best_diag is not None
 
     # Load best snapshot before returning (useful if caller wants to reuse model later)
     model.load_state_dict(best_state)
@@ -374,6 +440,7 @@ def train_and_evaluate(
             "pred_test_s": float(t_total_pred_test),
             "metrics_s": float(t_total_metrics),
         },
+        "diagnostics": best_diag,
     }
 
 
@@ -449,6 +516,7 @@ def main():
     best_test_metrics = result["best_test_metrics"]
     best_n_used_train = int(result["best_n_used_train"])
     best_n_used_test = int(result["best_n_used_test"])
+    diagnostics = result["diagnostics"]
 
     print("\n====================")
     print("Training complete")
@@ -488,6 +556,13 @@ def main():
 
     print("\nSaved result to SCOREBOARD.md")
 
+    diag_dir = Path("diagnostics")
+    diag_dir.mkdir(parents=True, exist_ok=True)
+    diag_path = diag_dir / f"torch_per_label__{dataset}.best.json"
+    diag_path.write_text(json.dumps(diagnostics, indent=2, sort_keys=True) + "\n")
+    print(f"Wrote diagnostics to {diag_path}")
+
 
 if __name__ == "__main__":
     main()
+uv run python -m benchmarks.torch_per_label --dataset yso-en
