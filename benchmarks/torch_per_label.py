@@ -565,4 +565,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-uv run python -m benchmarks.torch_per_label --dataset yso-en
