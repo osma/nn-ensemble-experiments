@@ -34,7 +34,7 @@ import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
-from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
+from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.metrics import load_csr, ndcg_at_k_dense, f1_at_k_dense, update_markdown_scoreboard
 from benchmarks.preprocessing import csr_to_log1p_tensor
@@ -89,7 +89,8 @@ class TorchMeanCandidate(nn.Module):
         self.n_models = int(n_models)
         self.n_labels = int(n_labels)
 
-        # Global mean weights (learnable)
+        # Global mean weights (learnable).
+        # Initialized to uniform here; main() may overwrite from DatasetConfig.ensemble3_init_weights.
         self.global_w = nn.Parameter(
             torch.full((n_models,), 1.0 / float(n_models), dtype=torch.float32)
         )
@@ -213,9 +214,10 @@ def _gather_logits_targets_and_mask(
     *,
     logits_full: torch.Tensor,     # (B, L) on DEVICE
     y_true_full: torch.Tensor,     # (B, L) on DEVICE
+    x_mean: torch.Tensor,          # (B, L) on DEVICE, evidence-based score (e.g., mean over models)
     cand_list: list[np.ndarray],   # length B, CPU arrays of candidate indices
     true_list: list[np.ndarray],   # length B, CPU arrays of true indices
-    hard_topk: int,                # per-row top-k mined from logits_full
+    hard_topk: int,                # per-row top-k mined from x_mean (NOT logits_full)
     neg_per_doc: int,              # optional random negatives outside (cand ∪ truth)
     rng: np.random.Generator,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -223,16 +225,17 @@ def _gather_logits_targets_and_mask(
     Build a packed (B, Kmax) tensor for logits and targets by selecting, per row:
       - candidate indices (union of base model nonzeros)
       - ground-truth indices (always included, even if not in candidates)
-      - hard negatives mined from current logits (top-k per row, filtered)
+      - hard negatives mined from base evidence x_mean (top-k per row, filtered)
       - optional random negatives outside (cand ∪ truth)
 
-    Returns:
-        logits_packed: (B, Kmax) float
-        targets_packed: (B, Kmax) float
-        mask: (B, Kmax) bool mask for valid (non-padding) positions
+    Important:
+      Hard-negative mining MUST be evidence-based for sparse inputs; mining from
+      logits tends to pick globally high-bias labels and destabilizes training.
     """
     device = logits_full.device
     bsz, n_labels = logits_full.shape
+    if x_mean.shape != logits_full.shape:
+        raise ValueError(f"x_mean must have shape {tuple(logits_full.shape)}, got {tuple(x_mean.shape)}")
     if bsz != len(cand_list) or bsz != len(true_list):
         raise ValueError("cand_list/true_list must match batch size")
 
@@ -241,7 +244,7 @@ def _gather_logits_targets_and_mask(
     # Mine hard candidates on-device then move indices to CPU for set filtering
     hard_idx_np: list[np.ndarray] = []
     if hard_topk_eff > 0:
-        topk_idx = torch.topk(logits_full, k=hard_topk_eff, dim=1, largest=True, sorted=False).indices
+        topk_idx = torch.topk(x_mean, k=hard_topk_eff, dim=1, largest=True, sorted=False).indices
         topk_idx_np = topk_idx.detach().cpu().numpy()
         for i in range(bsz):
             hard_idx_np.append(topk_idx_np[i].astype(np.int64, copy=False))
@@ -436,7 +439,13 @@ def main() -> None:
     y_train_true_eval_csr = y_train_true_csr[train_eval_idx]
     train_eval_cand_rows = [train_cand_rows[i] for i in train_eval_idx.tolist()]
 
-    model = TorchMeanCandidate(n_models=n_models, n_labels=n_labels).to(DEVICE)
+    init_global = get_dataset_config(dataset).ensemble3_init_weights
+    if init_global is not None:
+        with torch.no_grad():
+            model = TorchMeanCandidate(n_models=n_models, n_labels=n_labels).to(DEVICE)
+            model.global_w.copy_(torch.tensor(init_global, dtype=torch.float32))
+    else:
+        model = TorchMeanCandidate(n_models=n_models, n_labels=n_labels).to(DEVICE)
 
     optimizer = optim.AdamW(
         model.parameters(),
@@ -483,9 +492,11 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
 
                 logits_full = model(xb)  # (B, L)
+                x_mean = xb.mean(dim=1)  # (B, L) evidence-only scores for hard-negative mining
                 logits_sel, targets_sel, mask = _gather_logits_targets_and_mask(
                     logits_full=logits_full,
                     y_true_full=yb,
+                    x_mean=x_mean,
                     cand_list=cand_list,
                     true_list=true_list,
                     hard_topk=hard_topk,
