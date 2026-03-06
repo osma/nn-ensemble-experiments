@@ -61,7 +61,8 @@ TRAIN_SEED = 0
 # Candidate/negative sampling
 NEG_PER_DOC = 256  # sampled negatives outside candidate set (0 disables)
 NEG_SEED = 4242
-
+HARD_NEG_TOPK = 2048  # per-row top-k mined from current logits (before filtering)
+LAMBDA_BIAS_L2 = 1e-3  # bias shrinkage (helps on very large label spaces)
 
 
 class TorchMeanCandidate(nn.Module):
@@ -168,17 +169,34 @@ def _sample_negatives(
     return _sample_negatives(n_labels=n_labels, candidate_idx=candidate_idx, k=k, rng=rng)
 
 
+def _row_true_indices_list(y_true: csr_matrix) -> list[np.ndarray]:
+    """
+    Return per-row true label indices from CSR ground truth.
+    """
+    out: list[np.ndarray] = []
+    indptr = y_true.indptr
+    indices = y_true.indices
+    for i in range(y_true.shape[0]):
+        out.append(indices[indptr[i] : indptr[i + 1]].astype(np.int64, copy=False))
+    return out
+
+
 def _gather_logits_targets_and_mask(
     *,
-    logits_full: torch.Tensor,   # (B, L) on DEVICE
-    y_true_full: torch.Tensor,   # (B, L) on DEVICE
-    cand_list: list[np.ndarray], # length B, CPU arrays of indices
-    neg_per_doc: int,
+    logits_full: torch.Tensor,     # (B, L) on DEVICE
+    y_true_full: torch.Tensor,     # (B, L) on DEVICE
+    cand_list: list[np.ndarray],   # length B, CPU arrays of candidate indices
+    true_list: list[np.ndarray],   # length B, CPU arrays of true indices
+    hard_topk: int,                # per-row top-k mined from logits_full
+    neg_per_doc: int,              # optional random negatives outside (cand ∪ truth)
     rng: np.random.Generator,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Build a packed (B, Kmax) tensor for logits and targets by selecting per-row
-    candidate columns + sampled negatives.
+    Build a packed (B, Kmax) tensor for logits and targets by selecting, per row:
+      - candidate indices (union of base model nonzeros)
+      - ground-truth indices (always included, even if not in candidates)
+      - hard negatives mined from current logits (top-k per row, filtered)
+      - optional random negatives outside (cand ∪ truth)
 
     Returns:
         logits_packed: (B, Kmax) float
@@ -187,31 +205,58 @@ def _gather_logits_targets_and_mask(
     """
     device = logits_full.device
     bsz, n_labels = logits_full.shape
-    assert bsz == len(cand_list)
+    if bsz != len(cand_list) or bsz != len(true_list):
+        raise ValueError("cand_list/true_list must match batch size")
+
+    hard_topk_eff = int(max(0, min(hard_topk, n_labels)))
+
+    # Mine hard candidates on-device then move indices to CPU for set filtering
+    hard_idx_np: list[np.ndarray] = []
+    if hard_topk_eff > 0:
+        topk_idx = torch.topk(logits_full, k=hard_topk_eff, dim=1, largest=True, sorted=False).indices
+        topk_idx_np = topk_idx.detach().cpu().numpy()
+        for i in range(bsz):
+            hard_idx_np.append(topk_idx_np[i].astype(np.int64, copy=False))
+    else:
+        hard_idx_np = [np.empty((0,), dtype=np.int64) for _ in range(bsz)]
 
     selected_per_row: list[np.ndarray] = []
     max_k = 0
+
     for i in range(bsz):
         cand = cand_list[i]
-        neg = _sample_negatives(n_labels=n_labels, candidate_idx=cand, k=neg_per_doc, rng=rng)
-        if cand.size == 0 and neg.size == 0:
-            idx = np.empty((0,), dtype=np.int64)
-        elif cand.size == 0:
-            idx = neg
-        elif neg.size == 0:
-            idx = cand
+        true_idx = true_list[i]
+        base = (
+            np.unique(np.concatenate([cand, true_idx]).astype(np.int64, copy=False))
+            if (cand.size or true_idx.size)
+            else np.empty((0,), dtype=np.int64)
+        )
+
+        # Hard negatives: remove any true/candidate indices
+        if hard_idx_np[i].size:
+            # Filter by set membership (sizes are small: <= ~2k + candidates)
+            base_set = set(base.tolist()) if base.size else set()
+            hard_filtered = [x for x in hard_idx_np[i].tolist() if x not in base_set]
+            hard = np.fromiter(dict.fromkeys(hard_filtered), dtype=np.int64)
         else:
-            idx = np.unique(np.concatenate([cand, neg]).astype(np.int64, copy=False))
+            hard = np.empty((0,), dtype=np.int64)
+
+        # Optional random negatives outside (cand ∪ truth)
+        neg = _sample_negatives(n_labels=n_labels, candidate_idx=base, k=neg_per_doc, rng=rng)
+
+        if base.size == 0 and hard.size == 0 and neg.size == 0:
+            idx = np.empty((0,), dtype=np.int64)
+        else:
+            idx = np.unique(np.concatenate([base, hard, neg]).astype(np.int64, copy=False))
+
         selected_per_row.append(idx)
         max_k = max(max_k, int(idx.size))
 
     if max_k == 0:
-        # No candidates anywhere in this batch -> return empty; caller should skip
         empty_f = torch.empty((bsz, 0), device=device, dtype=logits_full.dtype)
         empty_b = torch.empty((bsz, 0), device=device, dtype=torch.bool)
         return empty_f, empty_f, empty_b
 
-    # Pad with -1 indices
     idx_padded = torch.full((bsz, max_k), -1, device=device, dtype=torch.int64)
     for i, idx in enumerate(selected_per_row):
         if idx.size == 0:
@@ -225,7 +270,6 @@ def _gather_logits_targets_and_mask(
     logits = torch.gather(logits_full, dim=1, index=safe_idx)
     targets = torch.gather(y_true_full, dim=1, index=safe_idx)
 
-    # Fill padding values to keep tensors finite; mask controls loss contribution
     logits = torch.where(mask, logits, torch.zeros_like(logits))
     targets = torch.where(mask, targets, torch.zeros_like(targets))
 
@@ -283,13 +327,31 @@ def main() -> None:
         "--neg-per-doc",
         type=int,
         default=NEG_PER_DOC,
-        help="Number of negatives sampled outside candidate set per document (0 disables).",
+        help="Number of random negatives sampled outside (candidates ∪ truth) per document (0 disables).",
+    )
+    parser.add_argument(
+        "--hard-topk",
+        type=int,
+        default=HARD_NEG_TOPK,
+        help="Top-k hard negatives mined per document from current logits (before filtering).",
+    )
+    parser.add_argument(
+        "--lambda-bias",
+        type=float,
+        default=LAMBDA_BIAS_L2,
+        help="L2 shrinkage strength for per-label bias (mean(bias^2)).",
     )
     args = parser.parse_args()
     dataset = str(args.dataset)
     neg_per_doc = int(args.neg_per_doc)
+    hard_topk = int(args.hard_topk)
+    lambda_bias = float(args.lambda_bias)
     if neg_per_doc < 0:
         raise ValueError("--neg-per-doc must be >= 0")
+    if hard_topk < 0:
+        raise ValueError("--hard-topk must be >= 0")
+    if lambda_bias < 0:
+        raise ValueError("--lambda-bias must be >= 0")
 
     torch.manual_seed(TRAIN_SEED)
     if DEVICE.type == "cuda":
@@ -315,6 +377,7 @@ def main() -> None:
     train_cand_rows = _row_union_indices(
         train_preds_csr[0], train_preds_csr[1], train_preds_csr[2]
     )
+    train_true_rows = _row_true_indices_list(y_train_true_csr)
 
     # Dense input features for the model (still OK; model is simple)
     X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds_csr], dim=1)
@@ -371,9 +434,11 @@ def main() -> None:
         model.train()
         with _Timer() as t_train:
             for idx_b, xb, yb in train_loader:
-                # idx_b is on CPU by default; use it to fetch candidate rows
+                # idx_b is on CPU by default; use it to fetch candidate + truth rows
                 idx_np = idx_b.numpy().astype(np.int64, copy=False)
-                cand_list = [train_cand_rows[i] for i in idx_np.tolist()]
+                idx_list = idx_np.tolist()
+                cand_list = [train_cand_rows[i] for i in idx_list]
+                true_list = [train_true_rows[i] for i in idx_list]
 
                 xb = xb.to(DEVICE, non_blocking=True)
                 yb = yb.to(DEVICE, non_blocking=True)
@@ -385,13 +450,17 @@ def main() -> None:
                     logits_full=logits_full,
                     y_true_full=yb,
                     cand_list=cand_list,
+                    true_list=true_list,
+                    hard_topk=hard_topk,
                     neg_per_doc=neg_per_doc,
                     rng=rng_neg,
                 )
                 if logits_sel.numel() == 0:
                     continue
 
-                loss = _masked_bce_with_logits(logits_sel, targets_sel, mask=mask)
+                loss_main = _masked_bce_with_logits(logits_sel, targets_sel, mask=mask)
+                loss_reg = lambda_bias * (model.bias ** 2).mean()
+                loss = loss_main + loss_reg
                 loss.backward()
                 optimizer.step()
 
@@ -416,7 +485,7 @@ def main() -> None:
         test_metrics["f1@5"] = f1
 
         print(
-            f"[neg_per_doc={neg_per_doc}] "
+            f"[neg_per_doc={neg_per_doc} hard_topk={hard_topk} lambda_bias={lambda_bias:g}] "
             f"Epoch {epoch:02d} | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
