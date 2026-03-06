@@ -21,7 +21,7 @@ import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 
-from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
+from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.metrics import (
     load_csr,
@@ -130,8 +130,8 @@ DEFAULT_LAMBDA_L1 = 3e-4
 # Reproducibility for training shuffles / init
 TRAIN_SEED = 0
 
-# Initial per-source weights for the *yso* 3-way ensemble order: [bonsai, fasttext, mllm]
-YSo_INIT_SOURCE_WEIGHTS = torch.tensor([0.2418, 0.6090, 0.1492], dtype=torch.float32)
+# Dataset-specific initialization is defined in benchmarks.datasets.DatasetConfig
+# as `ensemble3_init_weights` and consumed below.
 
 
 def _sync_if_cuda() -> None:
@@ -202,12 +202,18 @@ def train_and_evaluate(
     n_labels = X_train.shape[2]
 
     init_weights: torch.Tensor | None = None
-    if dataset in {"yso-fi", "yso-en"} and ensemble_keys == ("bonsai", "fasttext", "mllm"):
-        if YSo_INIT_SOURCE_WEIGHTS.shape[0] != n_models:
+    cfg = get_dataset_config(dataset)
+    if cfg.ensemble3 != ensemble_keys:
+        raise ValueError(
+            "Internal error: ensemble_keys does not match dataset config "
+            f"(cfg.ensemble3={cfg.ensemble3}, ensemble_keys={ensemble_keys})"
+        )
+    if cfg.ensemble3_init_weights is not None:
+        init_weights = torch.tensor(cfg.ensemble3_init_weights, dtype=torch.float32)
+        if init_weights.shape[0] != n_models:
             raise ValueError(
-                f"YSo_INIT_SOURCE_WEIGHTS has length {YSo_INIT_SOURCE_WEIGHTS.shape[0]}, but X_train has n_models={n_models}."
+                f"ensemble3_init_weights has length {init_weights.shape[0]}, but X_train has n_models={n_models}."
             )
-        init_weights = YSo_INIT_SOURCE_WEIGHTS
 
     model = PerLabelWeightedEnsemble(
         n_models=n_models,

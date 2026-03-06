@@ -15,11 +15,14 @@ class DatasetConfig:
       one split (e.g. koko has test-nn.npz but no train-nn.npz).
     - "ensemble3" defines the *exact* 3 predictors used by all 3-way ensembles
       (mean/weighted mean/torch_mean/torch_* ensemble scripts).
+    - "ensemble3_init_weights" (if provided) defines dataset-specific initial
+      weights for the 3-way ensemble, in the *same order* as ensemble3.
     """
 
     name: str
     preds: dict[str, dict[str, str]]  # preds[split][model_key] -> filename
     ensemble3: tuple[str, str, str]
+    ensemble3_init_weights: tuple[float, float, float] | None = None
 
 
 DATA_ROOT: Final[Path] = Path("data")
@@ -49,11 +52,13 @@ DATASETS: Final[dict[str, DatasetConfig]] = {
         name="yso-fi",
         preds=_preds_for_yso(),
         ensemble3=("bonsai", "fasttext", "mllm"),
+        ensemble3_init_weights=(0.2418, 0.6090, 0.1492),
     ),
     "yso-en": DatasetConfig(
         name="yso-en",
         preds=_preds_for_yso(),
         ensemble3=("bonsai", "fasttext", "mllm"),
+        ensemble3_init_weights=(0.5155, 0.1419, 0.3426),
     ),
     "koko": DatasetConfig(
         name="koko",
@@ -72,6 +77,7 @@ DATASETS: Final[dict[str, DatasetConfig]] = {
             },
         },
         ensemble3=("bonsai_gemma3", "bonsai_ovis2", "mllm"),
+        ensemble3_init_weights=(0.3542, 0.5186, 0.1271),
     ),
 }
 
