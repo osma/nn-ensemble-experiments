@@ -20,6 +20,9 @@
 | torch_mean(bonsai,fasttext,mllm) | yso-en | 10 | 0.653554 | 0.761254 | 0.638497 | 0.752728 | 0.452598 |
 | torch_mean(bonsai,fasttext,mllm) | yso-fi | 3 | 0.711555 | 0.812537 | 0.679665 | 0.796472 | 0.517343 |
 | torch_mean(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 7 | 0.430841 | 0.533480 | 0.358801 | 0.459657 | 0.263474 |
+| torch_mean_bias(bonsai,fasttext,mllm) | yso-en | 10 | 0.675692 | 0.746579 | 0.628250 | 0.697426 | 0.445224 |
+| torch_mean_bias(bonsai,fasttext,mllm) | yso-fi | 10 | 0.730476 | 0.805832 | 0.679027 | 0.768531 | 0.520435 |
+| torch_mean_bias(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.438010 | 0.502691 | 0.349668 | 0.397748 | 0.258715 |
 | torch_mean_residual(bonsai,fasttext,mllm) | yso-en | 12 | 0.688122 | 0.753923 | 0.656698 | 0.735480 | 0.469012 |
 | torch_mean_residual(bonsai,fasttext,mllm) | yso-fi | 2 | 0.710736 | 0.811807 | 0.687398 | 0.799336 | 0.521631 |
 | torch_mean_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.435223 | 0.548767 | 0.357736 | 0.467187 | 0.261571 |
@@ -37,9 +40,10 @@
 | 1 | torch_mean_residual | 0.567277 | 0.667334 | 0.417405 |
 | 2 | torch_mean | 0.558988 | 0.669619 | 0.411138 |
 | 3 | mean_weighted | 0.556082 | 0.668390 | 0.407729 |
-| 4 | torch_per_label | 0.528984 | 0.654006 | 0.384600 |
-| 5 | torch_per_label_l1_delta | 0.521236 | 0.650133 | 0.384248 |
-| 6 | nn | 0.520130 | 0.602769 | 0.383158 |
+| 4 | torch_mean_bias | 0.552315 | 0.621235 | 0.408125 |
+| 5 | torch_per_label | 0.528984 | 0.654006 | 0.384600 |
+| 6 | torch_per_label_l1_delta | 0.521236 | 0.650133 | 0.384248 |
+| 7 | nn | 0.520130 | 0.602769 | 0.383158 |
 
 ## Top 10 Models by Avg Test NDCG@1000 (across datasets)
 
@@ -50,7 +54,8 @@
 | 3 | torch_mean_residual | 0.667334 | 0.567277 | 0.417405 |
 | 4 | torch_per_label | 0.654006 | 0.528984 | 0.384600 |
 | 5 | torch_per_label_l1_delta | 0.650133 | 0.521236 | 0.384248 |
-| 6 | nn | 0.602769 | 0.520130 | 0.383158 |
+| 6 | torch_mean_bias | 0.621235 | 0.552315 | 0.408125 |
+| 7 | nn | 0.602769 | 0.520130 | 0.383158 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
@@ -58,7 +63,8 @@
 |------|-------|-----------|--------------|----------------|
 | 1 | torch_mean_residual | 0.417405 | 0.567277 | 0.667334 |
 | 2 | torch_mean | 0.411138 | 0.558988 | 0.669619 |
-| 3 | mean_weighted | 0.407729 | 0.556082 | 0.668390 |
-| 4 | torch_per_label | 0.384600 | 0.528984 | 0.654006 |
-| 5 | torch_per_label_l1_delta | 0.384248 | 0.521236 | 0.650133 |
-| 6 | nn | 0.383158 | 0.520130 | 0.602769 |
+| 3 | torch_mean_bias | 0.408125 | 0.552315 | 0.621235 |
+| 4 | mean_weighted | 0.407729 | 0.556082 | 0.668390 |
+| 5 | torch_per_label | 0.384600 | 0.528984 | 0.654006 |
+| 6 | torch_per_label_l1_delta | 0.384248 | 0.521236 | 0.650133 |
+| 7 | nn | 0.383158 | 0.520130 | 0.602769 |
