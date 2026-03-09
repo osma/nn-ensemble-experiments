@@ -289,6 +289,11 @@ def main() -> None:
         help="L2 shrinkage strength for per-label bias.",
     )
     parser.add_argument(
+        "--no-bias",
+        action="store_true",
+        help="Disable the per-label bias term (forces bias to 0 and excludes it from training/regularization).",
+    )
+    parser.add_argument(
         "--print-delta",
         action="store_true",
         help="Print simple diagnostics about delta_w magnitude each epoch.",
@@ -307,6 +312,7 @@ def main() -> None:
     rank = int(args.rank)
     lambda_uv = float(args.lambda_uv)
     lambda_bias = float(args.lambda_bias)
+    no_bias = bool(args.no_bias)
     print_delta = bool(args.print_delta)
     debug = bool(args.debug)
 
@@ -316,6 +322,8 @@ def main() -> None:
         raise ValueError("lambda_uv must be nonnegative")
     if lambda_bias < 0:
         raise ValueError("lambda_bias must be nonnegative")
+    if no_bias:
+        lambda_bias = 0.0
 
     # Deterministic-ish
     torch.manual_seed(TRAIN_SEED)
@@ -381,8 +389,13 @@ def main() -> None:
         init_global=init_global,
     ).to(DEVICE)
 
+    if no_bias:
+        with torch.no_grad():
+            model.bias.zero_()
+        model.bias.requires_grad_(False)
+
     optimizer = optim.AdamW(
-        model.parameters(),
+        (p for p in model.parameters() if p.requires_grad),
         lr=LR,
         weight_decay=WEIGHT_DECAY,
         eps=1e-8,
@@ -441,7 +454,7 @@ def main() -> None:
 
                 loss_main = criterion(probs, yb)
                 loss_reg_uv = lambda_uv * model.uv_l2()
-                loss_reg_bias = lambda_bias * model.bias_l2()
+                loss_reg_bias = (lambda_bias * model.bias_l2()) if (not no_bias) else torch.zeros_like(loss_reg_uv)
                 loss_reg = loss_reg_uv + loss_reg_bias
                 loss = loss_main + loss_reg
 
@@ -460,7 +473,7 @@ def main() -> None:
                         "grad_global_w": _grad_norm(model.global_w),
                         "grad_U": _grad_norm(model.U),
                         "grad_V": _grad_norm(model.V),
-                        "grad_bias": _grad_norm(model.bias),
+                        "grad_bias": _grad_norm(model.bias) if (not no_bias) else 0.0,
                     }
 
                 optimizer.step()
@@ -505,7 +518,7 @@ def main() -> None:
                 gw_stats = _tensor_stats_1d(model.global_w.detach())
                 u_stats = _tensor_stats_all(model.U.detach())
                 v_stats = _tensor_stats_all(model.V.detach())
-                b_stats = _tensor_stats_1d(model.bias.detach())
+                b_stats = _tensor_stats_1d(model.bias.detach()) if (not no_bias) else {"mean": 0.0, "std": 0.0, "min": 0.0, "p50": 0.0, "max": 0.0, "n": 0.0}
 
                 # Output distribution & saturation on the early-stop subset
                 subset_probs = train_scores_eval.detach()
@@ -516,7 +529,7 @@ def main() -> None:
                 # We reconstruct: out_lin = (x * w_eff).sum + bias, then clamp.
                 xb0 = X_train_eval[: min(8, int(X_train_eval.shape[0]))].to(DEVICE)
                 w_eff = model.effective_w()  # (M,L) on DEVICE
-                out_lin = (xb0 * w_eff.unsqueeze(0)).sum(dim=1) + model.bias  # (B,L)
+                out_lin = (xb0 * w_eff.unsqueeze(0)).sum(dim=1) + (model.bias if (not no_bias) else 0.0)  # (B,L)
                 out_lin_stats = _tensor_stats_all(out_lin)
                 out_lin_sig = torch.sigmoid(out_lin)
                 out_sig_stats = _tensor_stats_all(out_lin_sig)
@@ -546,7 +559,8 @@ def main() -> None:
                 f"    V:        mean={v_stats['mean']:.6e} std={v_stats['std']:.6e} "
                 f"min={v_stats['min']:.6e} p50={v_stats['p50']:.6e} max={v_stats['max']:.6e}\n"
                 f"    bias:     mean={b_stats['mean']:.6e} std={b_stats['std']:.6e} "
-                f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}\n"
+                f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}"
+                + (" (disabled)\n" if no_bias else "\n")
                 f"    probs(subset): mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
                 f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} p99={s_stats['p99']:.6e} max={s_stats['max']:.6e} "
                 f"sat<=eps={sat['frac_le_eps']:.3f} sat>=1-eps={sat['frac_ge_1m_eps']:.3f}\n"
@@ -560,7 +574,7 @@ def main() -> None:
 
         epoch_dt = time.perf_counter() - epoch_t0
         print(
-            f"[rank={rank} lambda_uv={lambda_uv:g} lambda_bias={lambda_bias:g}] "
+            f"[rank={rank} lambda_uv={lambda_uv:g} lambda_bias={lambda_bias:g} no_bias={int(no_bias)}] "
             f"Epoch {epoch:02d} | "
             f"loss={loss.item():.6f} (bce={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
