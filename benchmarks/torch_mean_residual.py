@@ -34,6 +34,37 @@ from benchmarks.preprocessing import csr_to_log1p_tensor
 from benchmarks.metrics import load_csr, ndcg_at_k_dense, f1_at_k_dense, update_markdown_scoreboard
 
 
+def _tensor_stats_1d(t: torch.Tensor) -> dict[str, float]:
+    """
+    Lightweight numeric stats for debugging. Expects a 1D tensor on any device.
+    Returns Python floats.
+    """
+    if t.ndim != 1:
+        raise ValueError(f"_tensor_stats_1d expected 1D tensor, got shape {tuple(t.shape)}")
+    if t.numel() == 0:
+        return {"n": 0.0}
+
+    x = t.detach().to(dtype=torch.float32)
+    return {
+        "n": float(x.numel()),
+        "mean": float(x.mean().item()),
+        "std": float(x.std(unbiased=False).item()),
+        "min": float(x.min().item()),
+        "p01": float(torch.quantile(x, 0.01).item()),
+        "p50": float(torch.quantile(x, 0.50).item()),
+        "p99": float(torch.quantile(x, 0.99).item()),
+        "max": float(x.max().item()),
+    }
+
+
+def _tensor_stats_all(t: torch.Tensor) -> dict[str, float]:
+    """
+    Stats for any tensor (flattens). Returns Python floats.
+    """
+    x = t.detach().reshape(-1)
+    return _tensor_stats_1d(x)
+
+
 DEVICE = get_device()
 
 # Training defaults (intentionally similar to torch_per_label)
@@ -189,11 +220,21 @@ def main() -> None:
         action="store_true",
         help="Print delta_w diagnostics (delta_l2 and per-model mean |delta|) each epoch",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "Print extra debugging diagnostics each epoch: "
+            "global weights, delta weight distribution, bias distribution, "
+            "and output score distribution on the early-stop train subset."
+        ),
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
     lambda_delta = float(args.lambda_delta)
     lambda_bias = float(args.lambda_bias)
     print_delta = bool(args.print_delta)
+    debug = bool(args.debug)
 
     # Deterministic-ish
     torch.manual_seed(TRAIN_SEED)
@@ -304,7 +345,7 @@ def main() -> None:
         test_metrics["f1@5"] = f1
 
         diag = ""
-        if print_delta:
+        if print_delta or debug:
             with torch.no_grad():
                 delta_l2 = float(model.delta_l2().detach().cpu().item())
                 mean_abs_delta_per_model = (
@@ -326,6 +367,35 @@ def main() -> None:
                 f"max_abs_bias={max_abs_bias:.3e}"
             )
 
+        extra = ""
+        if debug:
+            with torch.no_grad():
+                w_global = model.global_w.detach()
+                delta_w = model.delta_w.detach()
+                bias = model.bias.detach()
+
+                # Output distribution on the early-stop subset (to spot saturation / scale issues)
+                # Note: model outputs logits; stats help detect exploding/vanishing scores.
+                subset_scores = train_scores_eval.detach()
+
+            w_stats = _tensor_stats_1d(w_global)
+            d_stats = _tensor_stats_all(delta_w)
+            b_stats = _tensor_stats_1d(bias)
+            s_stats = _tensor_stats_all(subset_scores)
+
+            extra = (
+                "\n"
+                "  debug:\n"
+                f"    global_w: mean={w_stats['mean']:.6f} std={w_stats['std']:.6f} "
+                f"min={w_stats['min']:.6f} p50={w_stats['p50']:.6f} max={w_stats['max']:.6f}\n"
+                f"    delta_w:  mean={d_stats['mean']:.6e} std={d_stats['std']:.6e} "
+                f"min={d_stats['min']:.6e} p50={d_stats['p50']:.6e} max={d_stats['max']:.6e}\n"
+                f"    bias:     mean={b_stats['mean']:.6e} std={b_stats['std']:.6e} "
+                f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}\n"
+                f"    scores:   mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
+                f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} max={s_stats['max']:.6e}"
+            )
+
         print(
             f"[lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g}] "
             f"Epoch {epoch:02d} | "
@@ -338,6 +408,7 @@ def main() -> None:
             f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
             f"{diag}"
+            f"{extra}"
         )
 
         current = float(train_ndcg1000)
