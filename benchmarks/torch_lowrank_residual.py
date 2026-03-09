@@ -561,7 +561,7 @@ def main() -> None:
                 f"    bias:     mean={b_stats['mean']:.6e} std={b_stats['std']:.6e} "
                 f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}"
                 + (" (disabled)\n" if no_bias else "\n")
-                f"    probs(subset): mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
+                + f"    probs(subset): mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
                 f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} p99={s_stats['p99']:.6e} max={s_stats['max']:.6e} "
                 f"sat<=eps={sat['frac_le_eps']:.3f} sat>=1-eps={sat['frac_ge_1m_eps']:.3f}\n"
                 f"    out_lin(tiny): mean={out_lin_stats['mean']:.6e} std={out_lin_stats['std']:.6e} "
