@@ -27,6 +27,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
 from benchmarks.device import get_device
@@ -61,6 +62,50 @@ WEIGHT_DECAY = 0.0  # rely on explicit penalties
 # Regularization strengths (tunable via CLI)
 DEFAULT_LAMBDA_UV_L2 = 1e-2
 DEFAULT_LAMBDA_BIAS_L2 = 1e-3
+
+
+def _tensor_stats_1d(t: torch.Tensor) -> dict[str, float]:
+    """
+    Lightweight numeric stats for debugging. Expects a 1D tensor on any device.
+    Returns Python floats.
+    """
+    if t.ndim != 1:
+        raise ValueError(f"_tensor_stats_1d expected 1D tensor, got shape {tuple(t.shape)}")
+    if t.numel() == 0:
+        return {"n": 0.0}
+
+    x = t.detach().to(dtype=torch.float32)
+    return {
+        "n": float(x.numel()),
+        "mean": float(x.mean().item()),
+        "std": float(x.std(unbiased=False).item()),
+        "min": float(x.min().item()),
+        "p01": float(torch.quantile(x, 0.01).item()),
+        "p50": float(torch.quantile(x, 0.50).item()),
+        "p99": float(torch.quantile(x, 0.99).item()),
+        "max": float(x.max().item()),
+    }
+
+
+def _tensor_stats_all(t: torch.Tensor) -> dict[str, float]:
+    """
+    Stats for any tensor (flattens). Returns Python floats.
+    """
+    return _tensor_stats_1d(t.detach().reshape(-1))
+
+
+def _fraction_at_bounds01(x: torch.Tensor, eps: float = 1e-8) -> dict[str, float]:
+    """
+    For probability-like tensors in [0,1], compute how much mass is near 0 or 1.
+    Helps detect clamp/saturation.
+    """
+    if x.numel() == 0:
+        return {"frac_le_eps": 0.0, "frac_ge_1m_eps": 0.0}
+    z = x.detach()
+    return {
+        "frac_le_eps": float((z <= eps).to(dtype=torch.float32).mean().item()),
+        "frac_ge_1m_eps": float((z >= (1.0 - eps)).to(dtype=torch.float32).mean().item()),
+    }
 
 
 def csr_to_sqrt_tensor(csr: csr_matrix) -> torch.Tensor:
@@ -234,6 +279,14 @@ def main() -> None:
         action="store_true",
         help="Print simple diagnostics about delta_w magnitude each epoch.",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "Print extra debugging diagnostics each epoch: parameter stats, "
+            "output distribution and saturation, and gradient norms (to catch clamp/vanishing)."
+        ),
+    )
     args = parser.parse_args()
 
     dataset = str(args.dataset)
@@ -241,6 +294,7 @@ def main() -> None:
     lambda_uv = float(args.lambda_uv)
     lambda_bias = float(args.lambda_bias)
     print_delta = bool(args.print_delta)
+    debug = bool(args.debug)
 
     if rank < 1:
         raise ValueError("rank must be positive")
@@ -266,6 +320,21 @@ def main() -> None:
     X_train = torch.stack([csr_to_sqrt_tensor(p) for p in train_preds], dim=1)
 
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
+
+    if debug:
+        # Basic data sanity checks
+        with torch.no_grad():
+            x_stats = _tensor_stats_all(X_train)
+            y_stats = _tensor_stats_all(Y_train)
+            y_pos_rate = float((Y_train > 0.0).to(dtype=torch.float32).mean().item())
+        print(
+            "debug: data\n"
+            f"  X_train stats: mean={x_stats['mean']:.6e} std={x_stats['std']:.6e} "
+            f"min={x_stats['min']:.6e} p50={x_stats['p50']:.6e} p99={x_stats['p99']:.6e} max={x_stats['max']:.6e}\n"
+            f"  Y_train stats: mean={y_stats['mean']:.6e} std={y_stats['std']:.6e} "
+            f"min={y_stats['min']:.6e} p50={y_stats['p50']:.6e} p99={y_stats['p99']:.6e} max={y_stats['max']:.6e}\n"
+            f"  Y_train positive rate: {y_pos_rate:.6e}"
+        )
 
     rng = np.random.default_rng(EARLY_STOP_SEED)
     n_train = int(X_train.shape[0])
@@ -306,6 +375,18 @@ def main() -> None:
     )
     criterion = nn.BCELoss()
 
+    if debug:
+        # Confirm we start with an exactly-zero residual (due to V=0 init).
+        with torch.no_grad():
+            dw = model.delta_w().detach()
+            dw_abs_mean = float(dw.abs().mean().cpu().item())
+            dw_abs_max = float(dw.abs().max().cpu().item())
+        print(
+            "debug: init\n"
+            f"  delta_w abs mean={dw_abs_mean:.6e} abs max={dw_abs_max:.6e} (expect ~0)\n"
+            f"  global_w={model.global_w.detach().cpu().numpy()}"
+        )
+
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
     train_loader = torch.utils.data.DataLoader(
         train_ds,
@@ -328,18 +409,46 @@ def main() -> None:
 
         model.train()
         with _Timer() as t_train:
+            last_batch_debug: dict[str, float] | None = None
+
             for xb, yb in train_loader:
                 xb = xb.to(DEVICE, non_blocking=True)
                 yb = yb.to(DEVICE, non_blocking=True)
 
                 optimizer.zero_grad(set_to_none=True)
-                logits = model(xb)
-                loss_main = criterion(logits, yb)
+
+                # Forward
+                probs = model(xb)
+
+                # Sanity: for BCELoss we must be in [0,1]
+                if debug:
+                    if torch.any(probs < 0.0) or torch.any(probs > 1.0) or torch.any(torch.isnan(probs)):
+                        raise RuntimeError("Model output contains values outside [0,1] or NaNs")
+
+                loss_main = criterion(probs, yb)
                 loss_reg_uv = lambda_uv * model.uv_l2()
                 loss_reg_bias = lambda_bias * model.bias_l2()
                 loss_reg = loss_reg_uv + loss_reg_bias
                 loss = loss_main + loss_reg
+
                 loss.backward()
+
+                # Capture gradient norms on the last minibatch (cheap, catches vanishing/exploding).
+                if debug:
+                    def _grad_norm(p: torch.Tensor | None) -> float:
+                        if p is None or p.grad is None:
+                            return 0.0
+                        return float(p.grad.detach().norm().cpu().item())
+
+                    last_batch_debug = {
+                        "loss_main": float(loss_main.detach().cpu().item()),
+                        "loss_reg": float(loss_reg.detach().cpu().item()),
+                        "grad_global_w": _grad_norm(model.global_w),
+                        "grad_U": _grad_norm(model.U),
+                        "grad_V": _grad_norm(model.V),
+                        "grad_bias": _grad_norm(model.bias),
+                    }
+
                 optimizer.step()
 
         # --- Early stop metric: train subset NDCG@1000 ---
@@ -362,7 +471,7 @@ def main() -> None:
         test_metrics["f1@5"] = f1
 
         diag = ""
-        if print_delta:
+        if print_delta or debug:
             with torch.no_grad():
                 # mean |delta_w| per model (M,)
                 mean_abs_delta = model.delta_w().detach().abs().mean(dim=1).cpu().numpy()
@@ -374,6 +483,66 @@ def main() -> None:
                     f"mean_abs_delta=[{mean_abs_delta[0]:.3e},{mean_abs_delta[1]:.3e},{mean_abs_delta[2]:.3e}] "
                     f"bias_l2={bias_l2:.6e}"
                 )
+
+        extra = ""
+        if debug:
+            with torch.no_grad():
+                # Parameter distributions
+                gw_stats = _tensor_stats_1d(model.global_w.detach())
+                u_stats = _tensor_stats_all(model.U.detach())
+                v_stats = _tensor_stats_all(model.V.detach())
+                b_stats = _tensor_stats_1d(model.bias.detach())
+
+                # Output distribution & saturation on the early-stop subset
+                subset_probs = train_scores_eval.detach()
+                s_stats = _tensor_stats_all(subset_probs)
+                sat = _fraction_at_bounds01(subset_probs, eps=1e-8)
+
+                # Track the *pre-clamp* linear output on a tiny batch to catch clamp saturation.
+                # We reconstruct: out_lin = (x * w_eff).sum + bias, then clamp.
+                xb0 = X_train_eval[: min(8, int(X_train_eval.shape[0]))].to(DEVICE)
+                w_eff = model.effective_w()  # (M,L) on DEVICE
+                out_lin = (xb0 * w_eff.unsqueeze(0)).sum(dim=1) + model.bias  # (B,L)
+                out_lin_stats = _tensor_stats_all(out_lin)
+                out_lin_sig = torch.sigmoid(out_lin)
+                out_sig_stats = _tensor_stats_all(out_lin_sig)
+                out_clamped = torch.clamp(out_lin, min=0.0, max=1.0)
+                clamp_sat = _fraction_at_bounds01(out_clamped, eps=1e-8)
+
+            # Include last minibatch grad norms if available.
+            grad_line = ""
+            if last_batch_debug is not None:
+                grad_line = (
+                    "\n"
+                    f"    grads(last batch): "
+                    f"||global_w||={last_batch_debug['grad_global_w']:.3e} "
+                    f"||U||={last_batch_debug['grad_U']:.3e} "
+                    f"||V||={last_batch_debug['grad_V']:.3e} "
+                    f"||bias||={last_batch_debug['grad_bias']:.3e} "
+                    f"(loss_main={last_batch_debug['loss_main']:.6f} loss_reg={last_batch_debug['loss_reg']:.6f})"
+                )
+
+            extra = (
+                "\n"
+                "  debug:\n"
+                f"    global_w: mean={gw_stats['mean']:.6f} std={gw_stats['std']:.6f} "
+                f"min={gw_stats['min']:.6f} p50={gw_stats['p50']:.6f} max={gw_stats['max']:.6f}\n"
+                f"    U:        mean={u_stats['mean']:.6e} std={u_stats['std']:.6e} "
+                f"min={u_stats['min']:.6e} p50={u_stats['p50']:.6e} max={u_stats['max']:.6e}\n"
+                f"    V:        mean={v_stats['mean']:.6e} std={v_stats['std']:.6e} "
+                f"min={v_stats['min']:.6e} p50={v_stats['p50']:.6e} max={v_stats['max']:.6e}\n"
+                f"    bias:     mean={b_stats['mean']:.6e} std={b_stats['std']:.6e} "
+                f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}\n"
+                f"    probs(subset): mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
+                f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} p99={s_stats['p99']:.6e} max={s_stats['max']:.6e} "
+                f"sat<=eps={sat['frac_le_eps']:.3f} sat>=1-eps={sat['frac_ge_1m_eps']:.3f}\n"
+                f"    out_lin(tiny): mean={out_lin_stats['mean']:.6e} std={out_lin_stats['std']:.6e} "
+                f"min={out_lin_stats['min']:.6e} p50={out_lin_stats['p50']:.6e} p99={out_lin_stats['p99']:.6e} max={out_lin_stats['max']:.6e}\n"
+                f"    sigmoid(out_lin): mean={out_sig_stats['mean']:.6e} std={out_sig_stats['std']:.6e} "
+                f"min={out_sig_stats['min']:.6e} p50={out_sig_stats['p50']:.6e} p99={out_sig_stats['p99']:.6e} max={out_sig_stats['max']:.6e}\n"
+                f"    clamp(out_lin): sat<=eps={clamp_sat['frac_le_eps']:.3f} sat>=1-eps={clamp_sat['frac_ge_1m_eps']:.3f}"
+                f"{grad_line}"
+            )
 
         epoch_dt = time.perf_counter() - epoch_t0
         print(
@@ -389,6 +558,7 @@ def main() -> None:
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s "
             f"total={epoch_dt:.3f}s"
             f"{diag}"
+            f"{extra}"
         )
 
         current = float(train_ndcg1000)
