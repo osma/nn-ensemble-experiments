@@ -67,6 +67,7 @@ As of the current committed scoreboard:
 | `torch_per_label` | Torch | Per‑label linear ensemble (logits) + bias, BCEWithLogitsLoss, fixed log1p preprocessing; early stopping on train subset NDCG@1000; writes diagnostics JSON | [benchmarks/torch_per_label.py](benchmarks/torch_per_label.py) |
 | `torch_per_label_l1_delta` | Torch | `torch_per_label` + L1 regularization on mean(|W − W0|) (logits) | [benchmarks/torch_per_label_l1_delta.py](benchmarks/torch_per_label_l1_delta.py) |
 | `torch_mean_residual` | Torch (experimental) | Global per-model weights + per-label residual weights + bias (logits), BCEWithLogitsLoss, explicit L2 penalties; early stopping on train subset NDCG@1000 | [benchmarks/torch_mean_residual.py](benchmarks/torch_mean_residual.py) |
+| `torch_lowrank_residual` | Torch (experimental) | `torch_mean_residual` + low-rank per-label residual weights (cross-label coupling), BCEWithLogitsLoss, explicit L2 penalties; residual initialized to 0 by zero-init factor | [benchmarks/torch_lowrank_residual.py](benchmarks/torch_lowrank_residual.py) |
 
 ---
 
