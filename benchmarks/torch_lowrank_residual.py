@@ -8,7 +8,8 @@
 #   logits[b,l] = sum_m (w_global[m] + delta_w[m,l]) * x[b,m,l] + bias[l]
 #
 # Notes:
-# - Inputs are log1p-preprocessed outside the model (same convention as torch_mean_residual).
+# - Inputs are sqrt-preprocessed outside the model (same convention as torch_nn).
+# - Output is clamped to [0,1] and trained with BCELoss (torch_nn-like), rather than logits/BCEWithLogitsLoss.
 # - Residual is initialized to zero by initializing V to zeros (U random), similar to torch_nn's
 #   "delta starts at 0" behavior.
 # - Early stopping is by TRAIN subset NDCG@1000 (no test leakage), matching other scripts.
@@ -29,6 +30,8 @@ import torch.optim as optim
 
 from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
 from benchmarks.device import get_device
+from scipy.sparse import csr_matrix
+
 from benchmarks.preprocessing import csr_to_log1p_tensor
 from benchmarks.metrics import (
     load_csr,
@@ -58,6 +61,17 @@ WEIGHT_DECAY = 0.0  # rely on explicit penalties
 # Regularization strengths (tunable via CLI)
 DEFAULT_LAMBDA_UV_L2 = 1e-2
 DEFAULT_LAMBDA_BIAS_L2 = 1e-3
+
+
+def csr_to_sqrt_tensor(csr: csr_matrix) -> torch.Tensor:
+    """
+    Convert CSR predictions to a dense torch tensor with fixed sqrt preprocessing:
+        sqrt(clamp(x, 0))
+
+    This matches torch_nn's input convention.
+    """
+    x = torch.from_numpy(csr.toarray()).float()
+    return torch.sqrt(torch.clamp(x, min=0.0))
 
 # Model capacity
 DEFAULT_RANK = 32
@@ -116,7 +130,7 @@ class LowRankResidualEnsemble(nn.Module):
         # Initialize V to zeros so delta_w starts at exactly 0 (like torch_nn delta init).
         self.U = nn.Parameter(torch.empty((self.n_models, self.rank), dtype=torch.float32))
         self.V = nn.Parameter(torch.zeros((self.rank, self.n_labels), dtype=torch.float32))
-        nn.init.normal_(self.U, mean=0.0, std=0.02)
+        nn.init.normal_(self.U, mean=0.0, std=0.1)
 
         # Per-label bias.
         self.bias = nn.Parameter(torch.zeros((self.n_labels,), dtype=torch.float32))
@@ -138,8 +152,8 @@ class LowRankResidualEnsemble(nn.Module):
             )
 
         w_eff = self.effective_w()  # (M, L)
-        logits = (x * w_eff.unsqueeze(0)).sum(dim=1) + self.bias  # (B, L)
-        return logits
+        out = (x * w_eff.unsqueeze(0)).sum(dim=1) + self.bias  # (B, L)
+        return torch.clamp(out, min=0.0, max=1.0)
 
     def uv_l2(self) -> torch.Tensor:
         # Mean squared norm for scale-invariant regularization.
@@ -249,7 +263,7 @@ def main() -> None:
 
     y_train_true = load_csr(str(truth_path(dataset, "train")))
     train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in ensemble_keys]
-    X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds], dim=1)
+    X_train = torch.stack([csr_to_sqrt_tensor(p) for p in train_preds], dim=1)
 
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
 
@@ -263,7 +277,7 @@ def main() -> None:
     print("Loading test data...")
     y_test_true = load_csr(str(truth_path(dataset, "test")))
     test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in ensemble_keys]
-    X_test = torch.stack([csr_to_log1p_tensor(p) for p in test_preds], dim=1)
+    X_test = torch.stack([csr_to_sqrt_tensor(p) for p in test_preds], dim=1)
 
     n_models = int(X_train.shape[1])
     n_labels = int(X_train.shape[2])
@@ -290,7 +304,7 @@ def main() -> None:
         weight_decay=WEIGHT_DECAY,
         eps=1e-8,
     )
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.BCELoss()
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
     train_loader = torch.utils.data.DataLoader(
