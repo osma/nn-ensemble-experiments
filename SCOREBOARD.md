@@ -17,9 +17,9 @@
 | nn | koko |  |  |  | 0.374594 | 0.425015 | 0.276537 |
 | nn | yso-en |  |  |  | 0.496716 | 0.615022 | 0.350647 |
 | nn | yso-fi |  |  |  | 0.689080 | 0.768269 | 0.522291 |
-| torch_lowrank_residual(bonsai,fasttext,mllm) | yso-en | 4 | 0.549041 | 0.692827 | 0.483192 | 0.652433 | 0.344828 |
-| torch_lowrank_residual(bonsai,fasttext,mllm) | yso-fi | 1 | 0.698587 | 0.802726 | 0.674988 | 0.791692 | 0.507396 |
-| torch_lowrank_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.431860 | 0.548179 | 0.356069 | 0.469555 | 0.260800 |
+| torch_lowrank_residual(bonsai,fasttext,mllm) | yso-en | 20 | 0.717563 | 0.793103 | 0.653607 | 0.732105 | 0.465664 |
+| torch_lowrank_residual(bonsai,fasttext,mllm) | yso-fi | 20 | 0.753699 | 0.835708 | 0.695448 | 0.785801 | 0.528905 |
+| torch_lowrank_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 10 | 0.464530 | 0.553372 | 0.365720 | 0.430831 | 0.270281 |
 | torch_mean(bonsai,fasttext,mllm) | yso-en | 8 | 0.653498 | 0.761266 | 0.638713 | 0.752943 | 0.452598 |
 | torch_mean(bonsai,fasttext,mllm) | yso-fi | 2 | 0.711559 | 0.812470 | 0.679665 | 0.796320 | 0.517343 |
 | torch_mean(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 6 | 0.429499 | 0.532532 | 0.357888 | 0.459138 | 0.262848 |
@@ -43,15 +43,15 @@
 
 | Rank | Model | Avg Test NDCG@10 |
 |------|-------|----------------|
-| 1 | torch_mean_residual | 0.567277 |
-| 2 | torch_nn | 0.559367 |
-| 3 | torch_mean | 0.558755 |
-| 4 | mean_weighted | 0.556082 |
-| 5 | torch_mean_bias | 0.550622 |
-| 6 | torch_per_label | 0.528984 |
-| 7 | torch_per_label_l1_delta | 0.527370 |
-| 8 | nn | 0.520130 |
-| 9 | torch_lowrank_residual | 0.504750 |
+| 1 | torch_lowrank_residual | 0.571592 |
+| 2 | torch_mean_residual | 0.567277 |
+| 3 | torch_nn | 0.559367 |
+| 4 | torch_mean | 0.558755 |
+| 5 | mean_weighted | 0.556082 |
+| 6 | torch_mean_bias | 0.550622 |
+| 7 | torch_per_label | 0.528984 |
+| 8 | torch_per_label_l1_delta | 0.527370 |
+| 9 | nn | 0.520130 |
 
 ## Top 10 Models by Avg Test NDCG@1000 (across datasets)
 
@@ -62,7 +62,7 @@
 | 3 | torch_mean_residual | 0.667334 |
 | 4 | torch_per_label | 0.654006 |
 | 5 | torch_per_label_l1_delta | 0.653453 |
-| 6 | torch_lowrank_residual | 0.637893 |
+| 6 | torch_lowrank_residual | 0.649579 |
 | 7 | torch_mean_bias | 0.617010 |
 | 8 | torch_nn | 0.607205 |
 | 9 | nn | 0.602769 |
@@ -71,15 +71,15 @@
 
 | Rank | Model | Avg Test F1@5 |
 |------|-------|----------------|
-| 1 | torch_mean_residual | 0.417405 |
-| 2 | torch_nn | 0.416001 |
-| 3 | torch_mean | 0.410930 |
-| 4 | mean_weighted | 0.407729 |
-| 5 | torch_mean_bias | 0.406253 |
-| 6 | torch_per_label_l1_delta | 0.385864 |
-| 7 | torch_per_label | 0.384600 |
-| 8 | nn | 0.383158 |
-| 9 | torch_lowrank_residual | 0.371008 |
+| 1 | torch_lowrank_residual | 0.421617 |
+| 2 | torch_mean_residual | 0.417405 |
+| 3 | torch_nn | 0.416001 |
+| 4 | torch_mean | 0.410930 |
+| 5 | mean_weighted | 0.407729 |
+| 6 | torch_mean_bias | 0.406253 |
+| 7 | torch_per_label_l1_delta | 0.385864 |
+| 8 | torch_per_label | 0.384600 |
+| 9 | nn | 0.383158 |
 
 ## Top 10 Models by Avg of 3 Test Metrics (koko)
 
@@ -89,10 +89,10 @@
 | 2 | torch_per_label | 0.366758 |
 | 3 | torch_nn | 0.362698 |
 | 4 | torch_mean_residual | 0.362165 |
-| 5 | torch_lowrank_residual | 0.362141 |
-| 6 | mean_weighted | 0.360361 |
-| 7 | torch_mean | 0.359958 |
-| 8 | nn | 0.358715 |
+| 5 | mean_weighted | 0.360361 |
+| 6 | torch_mean | 0.359958 |
+| 7 | nn | 0.358715 |
+| 8 | torch_lowrank_residual | 0.355611 |
 | 9 | torch_mean_bias | 0.331473 |
 
 ## Top 10 Models by Avg of 3 Test Metrics (yso-en)
@@ -100,13 +100,13 @@
 | Rank | Model | Avg(Test NDCG@1000, NDCG@10, F1@5) |
 |------|-------|----------------|
 | 1 | torch_mean_residual | 0.620397 |
-| 2 | mean_weighted | 0.615235 |
-| 3 | torch_mean | 0.614751 |
-| 4 | torch_mean_bias | 0.587923 |
-| 5 | torch_nn | 0.564373 |
-| 6 | torch_per_label_l1_delta | 0.519354 |
-| 7 | torch_per_label | 0.510580 |
-| 8 | torch_lowrank_residual | 0.493484 |
+| 2 | torch_lowrank_residual | 0.617125 |
+| 3 | mean_weighted | 0.615235 |
+| 4 | torch_mean | 0.614751 |
+| 5 | torch_mean_bias | 0.587923 |
+| 6 | torch_nn | 0.564373 |
+| 7 | torch_per_label_l1_delta | 0.519354 |
+| 8 | torch_per_label | 0.510580 |
 | 9 | nn | 0.487462 |
 
 ## Top 10 Models by Avg of 3 Test Metrics (yso-fi)
@@ -115,10 +115,10 @@
 |------|-------|----------------|
 | 1 | torch_per_label | 0.690252 |
 | 2 | torch_per_label_l1_delta | 0.680134 |
-| 3 | torch_mean_residual | 0.669455 |
-| 4 | torch_mean | 0.664443 |
-| 5 | nn | 0.659880 |
-| 6 | torch_lowrank_residual | 0.658025 |
+| 3 | torch_lowrank_residual | 0.670051 |
+| 4 | torch_mean_residual | 0.669455 |
+| 5 | torch_mean | 0.664443 |
+| 6 | nn | 0.659880 |
 | 7 | mean_weighted | 0.656605 |
 | 8 | torch_nn | 0.655502 |
 | 9 | torch_mean_bias | 0.654487 |
