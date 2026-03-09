@@ -38,39 +38,78 @@
 
 ## Top 10 Models by Avg Test NDCG@10 (across datasets)
 
-| Rank | Model | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |
-|------|-------|--------------|----------------|-----------|
-| 1 | torch_mean_residual | 0.567277 | 0.667334 | 0.417405 |
-| 2 | torch_nn | 0.559367 | 0.607205 | 0.416001 |
-| 3 | torch_mean | 0.558755 | 0.669467 | 0.410930 |
-| 4 | mean_weighted | 0.556082 | 0.668390 | 0.407729 |
-| 5 | torch_mean_bias | 0.550622 | 0.617010 | 0.406253 |
-| 6 | torch_per_label | 0.528984 | 0.654006 | 0.384600 |
-| 7 | torch_per_label_l1_delta | 0.527370 | 0.653453 | 0.385864 |
-| 8 | nn | 0.520130 | 0.602769 | 0.383158 |
+| Rank | Model | Avg Test NDCG@10 |
+|------|-------|----------------|
+| 1 | torch_mean_residual | 0.567277 |
+| 2 | torch_nn | 0.559367 |
+| 3 | torch_mean | 0.558755 |
+| 4 | mean_weighted | 0.556082 |
+| 5 | torch_mean_bias | 0.550622 |
+| 6 | torch_per_label | 0.528984 |
+| 7 | torch_per_label_l1_delta | 0.527370 |
+| 8 | nn | 0.520130 |
 
 ## Top 10 Models by Avg Test NDCG@1000 (across datasets)
 
-| Rank | Model | Test NDCG@1000 | Test NDCG@10 | Test F1@5 |
-|------|-------|----------------|--------------|-----------|
-| 1 | torch_mean | 0.669467 | 0.558755 | 0.410930 |
-| 2 | mean_weighted | 0.668390 | 0.556082 | 0.407729 |
-| 3 | torch_mean_residual | 0.667334 | 0.567277 | 0.417405 |
-| 4 | torch_per_label | 0.654006 | 0.528984 | 0.384600 |
-| 5 | torch_per_label_l1_delta | 0.653453 | 0.527370 | 0.385864 |
-| 6 | torch_mean_bias | 0.617010 | 0.550622 | 0.406253 |
-| 7 | torch_nn | 0.607205 | 0.559367 | 0.416001 |
-| 8 | nn | 0.602769 | 0.520130 | 0.383158 |
+| Rank | Model | Avg Test NDCG@1000 |
+|------|-------|----------------|
+| 1 | torch_mean | 0.669467 |
+| 2 | mean_weighted | 0.668390 |
+| 3 | torch_mean_residual | 0.667334 |
+| 4 | torch_per_label | 0.654006 |
+| 5 | torch_per_label_l1_delta | 0.653453 |
+| 6 | torch_mean_bias | 0.617010 |
+| 7 | torch_nn | 0.607205 |
+| 8 | nn | 0.602769 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
-| Rank | Model | Test F1@5 | Test NDCG@10 | Test NDCG@1000 |
-|------|-------|-----------|--------------|----------------|
-| 1 | torch_mean_residual | 0.417405 | 0.567277 | 0.667334 |
-| 2 | torch_nn | 0.416001 | 0.559367 | 0.607205 |
-| 3 | torch_mean | 0.410930 | 0.558755 | 0.669467 |
-| 4 | mean_weighted | 0.407729 | 0.556082 | 0.668390 |
-| 5 | torch_mean_bias | 0.406253 | 0.550622 | 0.617010 |
-| 6 | torch_per_label_l1_delta | 0.385864 | 0.527370 | 0.653453 |
-| 7 | torch_per_label | 0.384600 | 0.528984 | 0.654006 |
-| 8 | nn | 0.383158 | 0.520130 | 0.602769 |
+| Rank | Model | Avg Test F1@5 |
+|------|-------|----------------|
+| 1 | torch_mean_residual | 0.417405 |
+| 2 | torch_nn | 0.416001 |
+| 3 | torch_mean | 0.410930 |
+| 4 | mean_weighted | 0.407729 |
+| 5 | torch_mean_bias | 0.406253 |
+| 6 | torch_per_label_l1_delta | 0.385864 |
+| 7 | torch_per_label | 0.384600 |
+| 8 | nn | 0.383158 |
+
+## Top 10 Models by Avg of 3 Test Metrics (koko)
+
+| Rank | Model | Avg(Test NDCG@1000, NDCG@10, F1@5) |
+|------|-------|----------------|
+| 1 | torch_per_label_l1_delta | 0.367199 |
+| 2 | torch_per_label | 0.366758 |
+| 3 | torch_nn | 0.362698 |
+| 4 | torch_mean_residual | 0.362165 |
+| 5 | mean_weighted | 0.360361 |
+| 6 | torch_mean | 0.359958 |
+| 7 | nn | 0.358715 |
+| 8 | torch_mean_bias | 0.331473 |
+
+## Top 10 Models by Avg of 3 Test Metrics (yso-en)
+
+| Rank | Model | Avg(Test NDCG@1000, NDCG@10, F1@5) |
+|------|-------|----------------|
+| 1 | torch_mean_residual | 0.620397 |
+| 2 | mean_weighted | 0.615235 |
+| 3 | torch_mean | 0.614751 |
+| 4 | torch_mean_bias | 0.587923 |
+| 5 | torch_nn | 0.564373 |
+| 6 | torch_per_label_l1_delta | 0.519354 |
+| 7 | torch_per_label | 0.510580 |
+| 8 | nn | 0.487462 |
+
+## Top 10 Models by Avg of 3 Test Metrics (yso-fi)
+
+| Rank | Model | Avg(Test NDCG@1000, NDCG@10, F1@5) |
+|------|-------|----------------|
+| 1 | torch_per_label | 0.690252 |
+| 2 | torch_per_label_l1_delta | 0.680134 |
+| 3 | torch_mean_residual | 0.669455 |
+| 4 | torch_mean | 0.664443 |
+| 5 | nn | 0.659880 |
+| 6 | mean_weighted | 0.656605 |
+| 7 | torch_nn | 0.655502 |
+| 8 | torch_mean_bias | 0.654487 |
