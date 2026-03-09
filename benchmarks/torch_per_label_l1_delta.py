@@ -109,7 +109,7 @@ class PerLabelWeightedEnsemble(nn.Module):
 # ============================
 
 DEVICE = get_device()
-EPOCHS = 10
+EPOCHS = 20
 K_VALUES = (10, 1000)
 
 PATIENCE = 2

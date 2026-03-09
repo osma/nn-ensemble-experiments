@@ -17,19 +17,19 @@
 | nn | koko |  |  |  | 0.374594 | 0.425015 | 0.276537 |
 | nn | yso-en |  |  |  | 0.496716 | 0.615022 | 0.350647 |
 | nn | yso-fi |  |  |  | 0.689080 | 0.768269 | 0.522291 |
-| torch_mean(bonsai,fasttext,mllm) | yso-en | 10 | 0.653554 | 0.761254 | 0.638497 | 0.752728 | 0.452598 |
-| torch_mean(bonsai,fasttext,mllm) | yso-fi | 3 | 0.711555 | 0.812537 | 0.679665 | 0.796472 | 0.517343 |
-| torch_mean(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 7 | 0.430841 | 0.533480 | 0.358801 | 0.459657 | 0.263474 |
-| torch_mean_bias(bonsai,fasttext,mllm) | yso-en | 10 | 0.675692 | 0.746579 | 0.628250 | 0.697426 | 0.445224 |
-| torch_mean_bias(bonsai,fasttext,mllm) | yso-fi | 10 | 0.730476 | 0.805832 | 0.679027 | 0.768531 | 0.520435 |
-| torch_mean_bias(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.438010 | 0.502691 | 0.349668 | 0.397748 | 0.258715 |
+| torch_mean(bonsai,fasttext,mllm) | yso-en | 8 | 0.653498 | 0.761266 | 0.638713 | 0.752943 | 0.452598 |
+| torch_mean(bonsai,fasttext,mllm) | yso-fi | 2 | 0.711559 | 0.812470 | 0.679665 | 0.796320 | 0.517343 |
+| torch_mean(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 6 | 0.429499 | 0.532532 | 0.357888 | 0.459138 | 0.262848 |
+| torch_mean_bias(bonsai,fasttext,mllm) | yso-en | 12 | 0.674246 | 0.746445 | 0.624893 | 0.694130 | 0.444747 |
+| torch_mean_bias(bonsai,fasttext,mllm) | yso-fi | 18 | 0.734635 | 0.807127 | 0.681998 | 0.763381 | 0.518083 |
+| torch_mean_bias(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 5 | 0.433004 | 0.497867 | 0.344974 | 0.393518 | 0.255928 |
 | torch_mean_residual(bonsai,fasttext,mllm) | yso-en | 12 | 0.688122 | 0.753923 | 0.656698 | 0.735480 | 0.469012 |
 | torch_mean_residual(bonsai,fasttext,mllm) | yso-fi | 2 | 0.710736 | 0.811807 | 0.687398 | 0.799336 | 0.521631 |
 | torch_mean_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.435223 | 0.548767 | 0.357736 | 0.467187 | 0.261571 |
 | torch_per_label(bonsai,fasttext,mllm) | yso-en | 19 | 0.626856 | 0.741188 | 0.515139 | 0.671659 | 0.344941 |
 | torch_per_label(bonsai,fasttext,mllm) | yso-fi | 5 | 0.725988 | 0.823065 | 0.710171 | 0.816454 | 0.544132 |
 | torch_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.439253 | 0.555085 | 0.361643 | 0.473905 | 0.264727 |
-| torch_per_label_l1_delta(bonsai,fasttext,mllm) | yso-en | 10 | 0.595045 | 0.724810 | 0.504414 | 0.669583 | 0.350857 |
+| torch_per_label_l1_delta(bonsai,fasttext,mllm) | yso-en | 20 | 0.619971 | 0.738825 | 0.522815 | 0.679542 | 0.355704 |
 | torch_per_label_l1_delta(bonsai,fasttext,mllm) | yso-fi | 5 | 0.723691 | 0.820476 | 0.698256 | 0.806495 | 0.535650 |
 | torch_per_label_l1_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.440279 | 0.558067 | 0.361038 | 0.474321 | 0.266237 |
 
@@ -38,23 +38,23 @@
 | Rank | Model | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |
 |------|-------|--------------|----------------|-----------|
 | 1 | torch_mean_residual | 0.567277 | 0.667334 | 0.417405 |
-| 2 | torch_mean | 0.558988 | 0.669619 | 0.411138 |
+| 2 | torch_mean | 0.558755 | 0.669467 | 0.410930 |
 | 3 | mean_weighted | 0.556082 | 0.668390 | 0.407729 |
-| 4 | torch_mean_bias | 0.552315 | 0.621235 | 0.408125 |
+| 4 | torch_mean_bias | 0.550622 | 0.617010 | 0.406253 |
 | 5 | torch_per_label | 0.528984 | 0.654006 | 0.384600 |
-| 6 | torch_per_label_l1_delta | 0.521236 | 0.650133 | 0.384248 |
+| 6 | torch_per_label_l1_delta | 0.527370 | 0.653453 | 0.385864 |
 | 7 | nn | 0.520130 | 0.602769 | 0.383158 |
 
 ## Top 10 Models by Avg Test NDCG@1000 (across datasets)
 
 | Rank | Model | Test NDCG@1000 | Test NDCG@10 | Test F1@5 |
 |------|-------|----------------|--------------|-----------|
-| 1 | torch_mean | 0.669619 | 0.558988 | 0.411138 |
+| 1 | torch_mean | 0.669467 | 0.558755 | 0.410930 |
 | 2 | mean_weighted | 0.668390 | 0.556082 | 0.407729 |
 | 3 | torch_mean_residual | 0.667334 | 0.567277 | 0.417405 |
 | 4 | torch_per_label | 0.654006 | 0.528984 | 0.384600 |
-| 5 | torch_per_label_l1_delta | 0.650133 | 0.521236 | 0.384248 |
-| 6 | torch_mean_bias | 0.621235 | 0.552315 | 0.408125 |
+| 5 | torch_per_label_l1_delta | 0.653453 | 0.527370 | 0.385864 |
+| 6 | torch_mean_bias | 0.617010 | 0.550622 | 0.406253 |
 | 7 | nn | 0.602769 | 0.520130 | 0.383158 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
@@ -62,9 +62,9 @@
 | Rank | Model | Test F1@5 | Test NDCG@10 | Test NDCG@1000 |
 |------|-------|-----------|--------------|----------------|
 | 1 | torch_mean_residual | 0.417405 | 0.567277 | 0.667334 |
-| 2 | torch_mean | 0.411138 | 0.558988 | 0.669619 |
-| 3 | torch_mean_bias | 0.408125 | 0.552315 | 0.621235 |
-| 4 | mean_weighted | 0.407729 | 0.556082 | 0.668390 |
-| 5 | torch_per_label | 0.384600 | 0.528984 | 0.654006 |
-| 6 | torch_per_label_l1_delta | 0.384248 | 0.521236 | 0.650133 |
+| 2 | torch_mean | 0.410930 | 0.558755 | 0.669467 |
+| 3 | mean_weighted | 0.407729 | 0.556082 | 0.668390 |
+| 4 | torch_mean_bias | 0.406253 | 0.550622 | 0.617010 |
+| 5 | torch_per_label_l1_delta | 0.385864 | 0.527370 | 0.653453 |
+| 6 | torch_per_label | 0.384600 | 0.528984 | 0.654006 |
 | 7 | nn | 0.383158 | 0.520130 | 0.602769 |

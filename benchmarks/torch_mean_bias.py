@@ -21,7 +21,7 @@ from benchmarks.metrics import (
 )
 
 DEVICE = get_device()
-EPOCHS = 10
+EPOCHS = 20
 LR = 1e-3
 BATCH_SIZE = 32
 K_VALUES = (10, 1000)
