@@ -38,6 +38,10 @@ def _tensor_stats_1d(t: torch.Tensor) -> dict[str, float]:
     """
     Lightweight numeric stats for debugging. Expects a 1D tensor on any device.
     Returns Python floats.
+
+    Note:
+      torch.quantile() can error on very large tensors on some builds/devices.
+      For large tensors we compute quantiles on a deterministic subsample.
     """
     if t.ndim != 1:
         raise ValueError(f"_tensor_stats_1d expected 1D tensor, got shape {tuple(t.shape)}")
@@ -45,14 +49,24 @@ def _tensor_stats_1d(t: torch.Tensor) -> dict[str, float]:
         return {"n": 0.0}
 
     x = t.detach().to(dtype=torch.float32)
+
+    # Quantiles can be expensive / unsupported for huge arrays; subsample deterministically.
+    # Keep this small to avoid surprising slowdowns during debugging.
+    max_q_n = 2_000_000
+    xq = x
+    if x.numel() > max_q_n:
+        # Deterministic stride-based subsample (no RNG, no extra deps).
+        step = int(np.ceil(x.numel() / max_q_n))
+        xq = x[::step]
+
     return {
         "n": float(x.numel()),
         "mean": float(x.mean().item()),
         "std": float(x.std(unbiased=False).item()),
         "min": float(x.min().item()),
-        "p01": float(torch.quantile(x, 0.01).item()),
-        "p50": float(torch.quantile(x, 0.50).item()),
-        "p99": float(torch.quantile(x, 0.99).item()),
+        "p01": float(torch.quantile(xq, 0.01).item()),
+        "p50": float(torch.quantile(xq, 0.50).item()),
+        "p99": float(torch.quantile(xq, 0.99).item()),
         "max": float(x.max().item()),
     }
 
