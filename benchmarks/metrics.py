@@ -230,37 +230,29 @@ def _model_family(model: str) -> str:
 
 def _render_top10_table(
     rows: list[dict[str, str]],
+    *,
     sort_key: str,
+    metric_label: str,
     title: str,
+    n: int = 10,
 ):
     ranked = sorted(
         rows,
-        key=lambda r: _parse_float(r[sort_key]),
+        key=lambda r: _parse_float(r.get(sort_key, "")),
         reverse=True,
-    )[:10]
+    )[:n]
 
-    if sort_key == "test ndcg@10":
-        header = "| Rank | Model | Test NDCG@10 | Test NDCG@1000 | Test F1@5 |\n"
-        sep = "|------|-------|--------------|----------------|-----------|\n"
-        line = "| {rank} | {model} | {ndcg10:.6f} | {ndcg1000:.6f} | {f1:.6f} |\n"
-    elif sort_key == "test ndcg@1000":
-        header = "| Rank | Model | Test NDCG@1000 | Test NDCG@10 | Test F1@5 |\n"
-        sep = "|------|-------|----------------|--------------|-----------|\n"
-        line = "| {rank} | {model} | {ndcg1000:.6f} | {ndcg10:.6f} | {f1:.6f} |\n"
-    else:  # test f1@5
-        header = "| Rank | Model | Test F1@5 | Test NDCG@10 | Test NDCG@1000 |\n"
-        sep = "|------|-------|-----------|--------------|----------------|\n"
-        line = "| {rank} | {model} | {f1:.6f} | {ndcg10:.6f} | {ndcg1000:.6f} |\n"
+    header = f"| Rank | Model | {metric_label} |\n"
+    sep = "|------|-------|----------------|\n"
+    line = "| {rank} | {model} | {metric:.6f} |\n"
 
-    body = []
+    body: list[str] = []
     for i, r in enumerate(ranked, start=1):
         body.append(
             line.format(
                 rank=i,
                 model=r["model"],
-                ndcg10=_parse_float(r.get("test ndcg@10", "")),
-                ndcg1000=_parse_float(r.get("test ndcg@1000", "")),
-                f1=_parse_float(r.get("test f1@5", "")),
+                metric=_parse_float(r.get(sort_key, "")),
             )
         )
 
@@ -270,6 +262,21 @@ def _render_top10_table(
         sep,
         *body,
     ]
+
+
+def _avg3_test_score(row: dict[str, str]) -> float:
+    """
+    Average of the three test metrics used for per-dataset composite Top-N lists.
+
+    Policy (as requested):
+      - Use test metrics only.
+      - Exclude rows with any missing/non-finite metric (caller decides by checking finite result).
+    """
+    keys = ("test ndcg@1000", "test ndcg@10", "test f1@5")
+    vals = [_parse_float(row.get(k, "")) for k in keys]
+    if not all(np.isfinite(v) for v in vals):
+        return float("-inf")
+    return float(np.mean(vals))
 
 
 def update_markdown_scoreboard(
@@ -409,21 +416,63 @@ def update_markdown_scoreboard(
     top10_ndcg10 = _render_top10_table(
         aggregated_rows,
         sort_key="test ndcg@10",
+        metric_label="Avg Test NDCG@10",
         title="Top 10 Models by Avg Test NDCG@10 (across datasets)",
     )
 
     top10_ndcg1000 = _render_top10_table(
         aggregated_rows,
         sort_key="test ndcg@1000",
+        metric_label="Avg Test NDCG@1000",
         title="Top 10 Models by Avg Test NDCG@1000 (across datasets)",
     )
 
     top10_f1 = _render_top10_table(
         aggregated_rows,
         sort_key="test f1@5",
+        metric_label="Avg Test F1@5",
         title="Top 10 Models by Avg Test F1@5 (across datasets)",
     )
 
+    # --- Per-dataset composite Top-10 (avg of 3 test metrics) ---
+    per_dataset_sections: list[str] = []
+    for ds in required_datasets:
+        rows_ds = [r for r in ordered_rows if r["dataset"] == ds]
+
+        # Apply same inclusion policy as the global Top-10s (aggregate by model family,
+        # exclude base models except keep "nn").
+        by_model_ds: dict[str, list[dict[str, str]]] = {}
+        for r in rows_ds:
+            fam = _model_family(r["model"])
+            is_ensemble_row = "(" in r["model"]
+            if not is_ensemble_row and fam not in keep_base_families:
+                continue
+            by_model_ds.setdefault(fam, []).append(r)
+
+        composite_rows: list[dict[str, str]] = []
+        for fam, rs in by_model_ds.items():
+            # Exclude if any required metric is missing for this dataset (requested).
+            if any(_avg3_test_score(rr) == float("-inf") for rr in rs):
+                continue
+
+            composite = float(np.mean([_avg3_test_score(rr) for rr in rs]))
+
+            composite_rows.append(
+                {
+                    "model": fam,
+                    "test avg3": f"{composite:.6f}",
+                }
+            )
+
+        per_dataset_sections.extend(
+            _render_top10_table(
+                composite_rows,
+                sort_key="test avg3",
+                metric_label="Avg(Test NDCG@1000, NDCG@10, F1@5)",
+                title=f"Top 10 Models by Avg of 3 Test Metrics ({ds})",
+            )
+        )
+
     path.write_text(
-        "".join(header + main_table + top10_ndcg10 + top10_ndcg1000 + top10_f1)
+        "".join(header + main_table + top10_ndcg10 + top10_ndcg1000 + top10_f1 + per_dataset_sections)
     )
