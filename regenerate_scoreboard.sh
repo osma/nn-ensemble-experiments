@@ -17,7 +17,7 @@ set -eu
 
 CLEAN=0
 DATASETS="yso-fi yso-en koko"
-MODELS="baseline mean_weighted torch_mean torch_mean_bias torch_mean_residual torch_per_label torch_per_label_l1_delta"
+MODELS="baseline mean_weighted torch_mean torch_mean_bias torch_mean_residual torch_per_label torch_per_label_l1_delta torch_nn"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
