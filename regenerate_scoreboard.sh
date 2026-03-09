@@ -49,13 +49,13 @@ if [ "$CLEAN" -eq 1 ]; then
   rm -f SCOREBOARD.md
 fi
 
-for ds in $DATASETS; do
+for m in $MODELS; do
   echo ""
   echo "============================="
-  echo "DATASET: $ds"
+  echo "MODEL: $m"
   echo "============================="
 
-  for m in $MODELS; do
+  for ds in $DATASETS; do
     echo ""
     echo "---- Running: benchmarks.$m (dataset=$ds) ----"
     uv run python -m "benchmarks.$m" --dataset "$ds"
