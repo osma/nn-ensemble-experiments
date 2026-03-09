@@ -27,17 +27,21 @@ for large label spaces — and what reliably makes things worse.
 
 | Model name | Type | Description | Source |
 |-----------|------|-------------|--------|
-| `bonsai` | Baseline | Annif Bonsai backend predictions | data only |
-| `fasttext` | Baseline | Annif fastText backend predictions | data only |
+| `bonsai` | Baseline | Annif Bonsai backend predictions (yso-*) | data only |
+| `fasttext` | Baseline | Annif fastText backend predictions (yso-*) | data only |
 | `mllm` | Baseline | Annif mLLM backend predictions | data only |
-| `nn` | Baseline | Annif NN backend predictions | data only |
+| `nn` | Baseline | Annif NN backend predictions (yso-* and koko test only) | data only |
+| `bonsai_gemma3` | Baseline | Annif Bonsai (Gemma3) backend predictions (koko) | data only |
+| `bonsai_ovis2` | Baseline | Annif Bonsai (Ovis2) backend predictions (koko) | data only |
+| `baseline` | Non‑torch | Evaluate each individual base model and update scoreboard | [benchmarks/baseline.py](benchmarks/baseline.py) |
 | `mean` | Non‑torch | Simple arithmetic mean ensemble | [benchmarks/mean.py](benchmarks/mean.py) |
-| `mean_weighted` | Non‑torch | Grid‑searched weighted mean ensemble | [benchmarks/mean_weighted.py](benchmarks/mean_weighted.py) |
-| `torch_mean` | Torch | Fixed mean via Conv1d, trained with BCE | [benchmarks/torch_mean.py](benchmarks/torch_mean.py) |
-| `torch_mean_bias` | Torch | Mean ensemble with per‑label bias | [benchmarks/torch_mean_bias.py](benchmarks/torch_mean_bias.py) |
-| `torch_per_label` | Torch | Per‑label linear ensemble with bias (best overall) | [benchmarks/torch_per_label.py](benchmarks/torch_per_label.py) |
-| `torch_per_label_conv` | Torch | Conv1d‑based summation variant | [benchmarks/torch_per_label_conv.py](benchmarks/torch_per_label_conv.py) |
-| `torch_per_label_conv_epochXX_YY` | Torch (inference) | Epoch‑level logit ensembling | [benchmarks/epoch_ensemble.py](benchmarks/epoch_ensemble.py) |
+| `mean_weighted` | Non‑torch | Grid‑searched weighted mean ensemble (train NDCG@1000) | [benchmarks/mean_weighted.py](benchmarks/mean_weighted.py) |
+| `torch_mean` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss | [benchmarks/torch_mean.py](benchmarks/torch_mean.py) |
+| `torch_mean_bias` | Torch | torch_mean + per‑label bias (probabilities), BCE loss | [benchmarks/torch_mean_bias.py](benchmarks/torch_mean_bias.py) |
+| `torch_per_label` | Torch | Per‑label linear ensemble (logits) + bias; early stopping on train subset NDCG@1000 | [benchmarks/torch_per_label.py](benchmarks/torch_per_label.py) |
+| `torch_per_label_l1_delta` | Torch | torch_per_label + L1 on per‑label deviations from init weights | [benchmarks/torch_per_label_l1_delta.py](benchmarks/torch_per_label_l1_delta.py) |
+| `torch_mean_residual` | Torch (experimental) | torch_mean-like + global weights + per‑label residuals + bias (logits) | [benchmarks/torch_mean_residual.py](benchmarks/torch_mean_residual.py) |
+| `epoch_ensemble` | Torch (experimental) | Epoch-level logit ensembling prototype (depends on torch_per_label_conv, not currently present) | [benchmarks/epoch_ensemble.py](benchmarks/epoch_ensemble.py) |
 
 ---
 
