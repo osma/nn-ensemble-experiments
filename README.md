@@ -36,12 +36,13 @@ for large label spaces — and what reliably makes things worse.
 | `baseline` | Non‑torch | Evaluate each individual base model and update scoreboard | [benchmarks/baseline.py](benchmarks/baseline.py) |
 | `mean` | Non‑torch | Simple arithmetic mean ensemble | [benchmarks/mean.py](benchmarks/mean.py) |
 | `mean_weighted` | Non‑torch | Grid‑searched weighted mean ensemble (train NDCG@1000) | [benchmarks/mean_weighted.py](benchmarks/mean_weighted.py) |
-| `torch_mean` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss | [benchmarks/torch_mean.py](benchmarks/torch_mean.py) |
-| `torch_mean_bias` | Torch | torch_mean + per‑label bias (probabilities), BCE loss | [benchmarks/torch_mean_bias.py](benchmarks/torch_mean_bias.py) |
-| `torch_per_label` | Torch | Per‑label linear ensemble (logits) + bias; early stopping on train subset NDCG@1000 | [benchmarks/torch_per_label.py](benchmarks/torch_per_label.py) |
-| `torch_per_label_l1_delta` | Torch | torch_per_label + L1 on per‑label deviations from init weights | [benchmarks/torch_per_label_l1_delta.py](benchmarks/torch_per_label_l1_delta.py) |
-| `torch_mean_residual` | Torch (experimental) | torch_mean-like + global weights + per‑label residuals + bias (logits) | [benchmarks/torch_mean_residual.py](benchmarks/torch_mean_residual.py) |
-| `epoch_ensemble` | Torch (experimental) | Epoch-level logit ensembling prototype (depends on torch_per_label_conv, not currently present) | [benchmarks/epoch_ensemble.py](benchmarks/epoch_ensemble.py) |
+| `torch_mean` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_mean.py](benchmarks/torch_mean.py) |
+| `torch_mean_bias` | Torch | `torch_mean` + per‑label bias (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_mean_bias.py](benchmarks/torch_mean_bias.py) |
+| `torch_per_label` | Torch | Per‑label linear ensemble (logits) + bias, BCEWithLogitsLoss, fixed log1p preprocessing; early stopping on train subset NDCG@1000; writes diagnostics JSON | [benchmarks/torch_per_label.py](benchmarks/torch_per_label.py) |
+| `torch_per_label_l1_delta` | Torch | `torch_per_label` + L1 regularization on per‑label deviations from init weights (logits) | [benchmarks/torch_per_label_l1_delta.py](benchmarks/torch_per_label_l1_delta.py) |
+| `torch_mean_residual` | Torch (experimental) | Mean-like global weights + per‑label residual weights + bias (logits), BCEWithLogitsLoss, explicit L2 penalties; early stopping on train subset NDCG@1000 | [benchmarks/torch_mean_residual.py](benchmarks/torch_mean_residual.py) |
+
+> Note: `epoch_ensemble` is mentioned in older notes but is not currently implemented in this repo.
 
 ---
 
