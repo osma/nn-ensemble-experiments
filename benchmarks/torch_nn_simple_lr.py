@@ -89,8 +89,8 @@ class NNSimpleLowRank(nn.Module):
         global_out = torch.einsum("bml,m->bl", x, global_weights)  # (batch, L)
 
         # Per-label residual weight
-        label_weighted = x * self.label_weight.unsqueeze(0).unsqueeze(-1)  # (batch, M, L)
-        label_out = label_weighted.sum(dim=1)  # (batch, L)
+        # self.label_weight is per-label (L,), so broadcast over batch and model dims.
+        label_out = (x * self.label_weight.view(1, 1, -1)).sum(dim=1)  # (batch, L)
 
         # Low-rank label coupling: U @ V.T applied to the global output
         lr_matrix = self.U @ self.V.T  # (L, L)
