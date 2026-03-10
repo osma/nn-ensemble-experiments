@@ -206,8 +206,9 @@ def train_and_evaluate(
         model.eval()
         with torch.no_grad():
             val_logits = model(X_val)
-            val_ndcg_10 = ndcg_at_k_dense(Y_val, val_logits, k=10).item()
-            val_ndcg_1000 = ndcg_at_k_dense(Y_val, val_logits, k=1000).item()
+            # ndcg_at_k_dense expects y_true as CSR; Y_val is a dense torch.Tensor.
+            val_ndcg_10 = ndcg_at_k_dense(y_val_true, val_logits, k=10).item()
+            val_ndcg_1000 = ndcg_at_k_dense(y_val_true, val_logits, k=1000).item()
 
         print(
             f"Epoch {epoch:2d}: loss={epoch_loss / n_batches:.4f}, "
