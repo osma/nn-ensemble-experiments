@@ -139,8 +139,10 @@ def train_and_evaluate(
         X_train, Y_train, y_train_true = _load_split(
             dataset_config, "train", ensemble_keys, device
         )
+        # benchmarks.datasets.pred_path/truth_path accept only "train" or "test".
+        # Use "train" for validation/early-stopping signals.
         X_val, Y_val, y_val_true = _load_split(
-            dataset_config, "validation", ensemble_keys, device
+            dataset_config, "train", ensemble_keys, device
         )
         X_test, _, y_test_true = _load_split(
             dataset_config, "test", ensemble_keys, device
