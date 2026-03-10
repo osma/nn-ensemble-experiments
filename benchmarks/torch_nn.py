@@ -119,7 +119,10 @@ class NNEnsembleModel(nn.Module):
         if inputs.ndim != 3:
             raise ValueError(f"Expected inputs to have shape (B, M, L), got {tuple(inputs.shape)}")
 
-        mean = self.conv(inputs)[:, 0, :]
+        # Enforce Conv1d weights to form a convex combination (sum to 1).
+        # This keeps the "mean mixer" interpretable and prevents global scaling drift.
+        w = torch.softmax(self.conv.weight[:, :, 0], dim=1)  # (1, M)
+        mean = torch.sum(inputs * w.unsqueeze(-1), dim=1)  # (B, L)
         x = self.flatten(inputs)
         x = self.dropout1(x)
         x = F.relu(self.hidden(x))

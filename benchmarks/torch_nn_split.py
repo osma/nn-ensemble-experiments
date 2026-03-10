@@ -190,8 +190,10 @@ class NNSplitEnsembleModel(nn.Module):
                 f"Expected L={self.n_labels}, got {int(inputs.shape[2])}"
             )
 
-        # Mean mixer for all labels.
-        mean_all = self.conv(inputs)[:, 0, :]  # (B, L)
+        # Mean mixer for all labels, with Conv1d weights constrained to sum to 1.
+        # Using softmax enforces a convex combination and avoids global scaling drift.
+        w = torch.softmax(self.conv.weight[:, :, 0], dim=1)  # (1, M)
+        mean_all = torch.sum(inputs * w.unsqueeze(-1), dim=1)  # (B, L)
 
         # No active labels: just return mean.
         if self.n_active == 0:
@@ -262,7 +264,8 @@ def _delta_stats(model: NNSplitEnsembleModel, x_cpu_subset: torch.Tensor) -> tup
     with torch.no_grad():
         for (xb_cpu,) in loader:
             xb = xb_cpu.to(DEVICE, non_blocking=True)
-            mean_all = model.conv(xb)[:, 0, :]
+            w = torch.softmax(model.conv.weight[:, :, 0], dim=1)  # (1, M)
+            mean_all = torch.sum(xb * w.unsqueeze(-1), dim=1)  # (B, L)
             x_active = xb.index_select(dim=2, index=model.active_idx)
 
             x = model.flatten(x_active)
@@ -452,7 +455,13 @@ def main() -> None:
         test_metrics["f1@5"] = f1
 
         with torch.no_grad():
-            conv_w = model.conv.weight.detach().reshape(-1).cpu().numpy().tolist()
+            conv_w = (
+                torch.softmax(model.conv.weight.detach()[:, :, 0], dim=1)
+                .reshape(-1)
+                .cpu()
+                .numpy()
+                .tolist()
+            )
         delta_mean_abs, delta_p95_abs = _delta_stats(model, X_train_eval)
 
         print(
