@@ -33,9 +33,9 @@ As of the current committed scoreboard:
 
 ### Best overall (avg across datasets)
 
-- Best Avg **Test NDCG@10**: `torch_mean_residual` (0.567277)
+- Best Avg **Test NDCG@10**: `torch_lowrank_residual` (0.571592)
 - Best Avg **Test NDCG@1000**: `torch_mean` (0.669467)
-- Best Avg **Test F1@5**: `torch_mean_residual` (0.417405)
+- Best Avg **Test F1@5**: `torch_lowrank_residual` (0.421617)
 
 ### Best per dataset (avg of 3 test metrics)
 
@@ -50,6 +50,9 @@ As of the current committed scoreboard:
 
 ## Model summary (current)
 
+This table lists the **intended kept set** of benchmark scripts/models. If you removed
+additional scripts locally, update this table to match the remaining files.
+
 | Model name | Type | Description | Source |
 |-----------|------|-------------|--------|
 | `bonsai` | Baseline | Annif Bonsai backend predictions (yso-*) | data only |
@@ -62,12 +65,13 @@ As of the current committed scoreboard:
 | `mean` | Non‑torch | Simple arithmetic mean ensemble | [benchmarks/mean.py](benchmarks/mean.py) |
 | `mean_weighted` | Non‑torch | Grid‑searched weighted mean ensemble (select by train NDCG@1000) | [benchmarks/mean_weighted.py](benchmarks/mean_weighted.py) |
 | `torch_mean` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_mean.py](benchmarks/torch_mean.py) |
-| `torch_mean_bias` | Torch | `torch_mean` + per‑label bias (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_mean_bias.py](benchmarks/torch_mean_bias.py) |
-| `torch_nn` | Torch (experimental) | Mean-like conv + MLP correction over flattened inputs (probabilities), fixed sqrt preprocessing | [benchmarks/torch_nn.py](benchmarks/torch_nn.py) |
+| `torch_mean_residual` | Torch | Global per-model weights + per-label residual weights + bias (logits), BCEWithLogitsLoss, explicit L2 penalties; early stopping on train subset NDCG@1000 | [benchmarks/torch_mean_residual.py](benchmarks/torch_mean_residual.py) |
 | `torch_per_label` | Torch | Per‑label linear ensemble (logits) + bias, BCEWithLogitsLoss, fixed log1p preprocessing; early stopping on train subset NDCG@1000; writes diagnostics JSON | [benchmarks/torch_per_label.py](benchmarks/torch_per_label.py) |
 | `torch_per_label_l1_delta` | Torch | `torch_per_label` + L1 regularization on mean(|W − W0|) (logits) | [benchmarks/torch_per_label_l1_delta.py](benchmarks/torch_per_label_l1_delta.py) |
-| `torch_mean_residual` | Torch (experimental) | Global per-model weights + per-label residual weights + bias (logits), BCEWithLogitsLoss, explicit L2 penalties; early stopping on train subset NDCG@1000 | [benchmarks/torch_mean_residual.py](benchmarks/torch_mean_residual.py) |
-| `torch_lowrank_residual` | Torch (experimental) | `torch_mean_residual` + low-rank per-label residual weights (cross-label coupling), BCEWithLogitsLoss, explicit L2 penalties; residual initialized to 0 by zero-init factor | [benchmarks/torch_lowrank_residual.py](benchmarks/torch_lowrank_residual.py) |
+| `torch_lowrank_residual` | Torch (experimental) | Low-rank per-label residual weights (cross-label coupling) trained in logits space | (script removed in this repo pruning; keep only if present) |
+| `torch_lowrank_residual_epsclamp` | Torch (experimental) | Low-rank residual ensemble trained in probability space with eps clamp (kept only if present) | [benchmarks/torch_lowrank_residual_epsclamp.py](benchmarks/torch_lowrank_residual_epsclamp.py) |
+| `torch_lowrank_mix` | Torch (experimental) | Cross-label mixing only (A1), probability-space | [benchmarks/torch_lowrank_mix.py](benchmarks/torch_lowrank_mix.py) |
+| `torch_lowrank_residual_mix_temp` | Torch (experimental) | Residual + mixing with learnable scaling | [benchmarks/torch_lowrank_residual_mix_temp.py](benchmarks/torch_lowrank_residual_mix_temp.py) |
 
 ---
 
