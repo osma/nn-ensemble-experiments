@@ -237,7 +237,8 @@ def _delta_stats(model: NNSplitEnsembleModel, x_cpu_subset: torch.Tensor) -> tup
     """
     Compute mean(|delta|) and p95(|delta|) over a CPU subset.
 
-    We recompute delta by running the model pieces (avoid extra large allocations).
+    Note: torch.quantile() can error on very large tensors (implementation limits).
+    We therefore compute p95 approximately by sampling a bounded number of elements.
     """
     if model.n_active == 0:
         return 0.0, 0.0
@@ -250,13 +251,19 @@ def _delta_stats(model: NNSplitEnsembleModel, x_cpu_subset: torch.Tensor) -> tup
         pin_memory=(DEVICE.type == "cuda"),
     )
 
-    abs_vals: list[torch.Tensor] = []
+    sum_abs = 0.0
+    n_abs = 0
+
+    # Reservoir-ish: keep up to this many absolute delta values for quantile estimation.
+    # 1e6 floats ~ 4MB, safe on typical machines.
+    max_samples = 1_000_000
+    samples: list[torch.Tensor] = []
+
     with torch.no_grad():
         for (xb_cpu,) in loader:
             xb = xb_cpu.to(DEVICE, non_blocking=True)
             mean_all = model.conv(xb)[:, 0, :]
             x_active = xb.index_select(dim=2, index=model.active_idx)
-            mean_active = mean_all.index_select(dim=1, index=model.active_idx)
 
             x = model.flatten(x_active)
             x = model.dropout1(x)
@@ -264,16 +271,37 @@ def _delta_stats(model: NNSplitEnsembleModel, x_cpu_subset: torch.Tensor) -> tup
             x = model.dropout2(x)
             delta = model.delta_layer(x)  # (B, L_active)
 
-            # delta = out_active - mean_active (pre-clamp) by construction
-            abs_vals.append((delta).abs().detach().cpu().reshape(-1))
+            a = delta.abs().detach().cpu().reshape(-1)
 
-    if not abs_vals:
+            sum_abs += float(a.sum().item())
+            n_abs += int(a.numel())
+
+            if max_samples > 0:
+                # Sample at most remaining capacity from this chunk (without replacement).
+                remaining = max_samples - sum(int(s.numel()) for s in samples)
+                if remaining <= 0:
+                    max_samples = 0
+                else:
+                    if a.numel() <= remaining:
+                        samples.append(a)
+                    else:
+                        idx = torch.randperm(a.numel())[:remaining]
+                        samples.append(a.index_select(0, idx))
+
+    if n_abs == 0:
         return 0.0, 0.0
 
-    v = torch.cat(abs_vals, dim=0)
-    mean_abs = float(v.mean().item())
-    p95_abs = float(torch.quantile(v, 0.95).item())
-    return mean_abs, p95_abs
+    mean_abs = sum_abs / float(n_abs)
+
+    if not samples:
+        return float(mean_abs), 0.0
+
+    v = torch.cat(samples, dim=0)
+    v, _ = torch.sort(v)
+    # p95 with nearest-rank method
+    q_idx = min(int(round(0.95 * (v.numel() - 1))), v.numel() - 1)
+    p95_abs = float(v[q_idx].item())
+    return float(mean_abs), float(p95_abs)
 
 
 def main() -> None:
@@ -425,7 +453,7 @@ def main() -> None:
 
         with torch.no_grad():
             conv_w = model.conv.weight.detach().reshape(-1).cpu().numpy().tolist()
-            delta_mean_abs, delta_p95_abs = _delta_stats(model, X_train_eval)
+        delta_mean_abs, delta_p95_abs = _delta_stats(model, X_train_eval)
 
         print(
             f"Epoch {epoch:02d} | "
