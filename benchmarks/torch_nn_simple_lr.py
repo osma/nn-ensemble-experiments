@@ -275,7 +275,9 @@ def _load_split(
     X = torch.from_numpy(X_np).to(device)
 
     # Preprocess: log1p
-    X = csr_to_log1p_tensor(csr_matrix(X.cpu().numpy()))
+    # csr_to_log1p_tensor expects a 2D CSR matrix; our X is 3D (n_samples, M, L).
+    # Apply log1p in torch directly to preserve shape.
+    X = torch.log1p(torch.clamp_min(X, 0.0))
 
     # Load ground truth
     truth_path_i = truth_path(dataset_config.name, split)
