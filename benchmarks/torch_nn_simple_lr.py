@@ -206,9 +206,9 @@ def train_and_evaluate(
         model.eval()
         with torch.no_grad():
             val_logits = model(X_val)
-            # ndcg_at_k_dense expects y_true as CSR; Y_val is a dense torch.Tensor.
-            val_ndcg_10 = ndcg_at_k_dense(y_val_true, val_logits, k=10).item()
-            val_ndcg_1000 = ndcg_at_k_dense(y_val_true, val_logits, k=1000).item()
+            # ndcg_at_k_dense returns a tuple; first item is the scalar metric.
+            val_ndcg_10 = float(ndcg_at_k_dense(y_val_true, val_logits, k=10)[0])
+            val_ndcg_1000 = float(ndcg_at_k_dense(y_val_true, val_logits, k=1000)[0])
 
         print(
             f"Epoch {epoch:2d}: loss={epoch_loss / n_batches:.4f}, "
@@ -235,9 +235,10 @@ def train_and_evaluate(
     model.eval()
     with torch.no_grad():
         test_logits = model(X_test)
-        test_ndcg_10 = ndcg_at_k_dense(y_test_true, test_logits, k=10).item()
-        test_ndcg_1000 = ndcg_at_k_dense(y_test_true, test_logits, k=1000).item()
-        test_f1_5 = f1_at_k_dense(y_test_true, test_logits, k=5).item()
+        # ndcg_at_k_dense / f1_at_k_dense return tuples; first item is the scalar metric.
+        test_ndcg_10 = float(ndcg_at_k_dense(y_test_true, test_logits, k=10)[0])
+        test_ndcg_1000 = float(ndcg_at_k_dense(y_test_true, test_logits, k=1000)[0])
+        test_f1_5 = float(f1_at_k_dense(y_test_true, test_logits, k=5)[0])
 
     print(
         f"Test NDCG@10={test_ndcg_10:.4f}, NDCG@1000={test_ndcg_1000:.4f}, F1@5={test_f1_5:.4f}"
