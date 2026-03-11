@@ -1,6 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
+# Problem summary:
+# - This script assumes that after running `uv run python -m benchmarks.$m`,
+#   the SCOREBOARD.md row key for that run is `model_name` computed here.
+# - For `baseline`, the benchmark writes one row per base model (bonsai/fasttext/mllm/nn),
+#   not a row with model="baseline". Therefore `extract_and_cache_metrics()` cannot
+#   find a matching row and the script exits.
+# - Fix: skip caching for baseline; it doesn't produce a single stable row to cache.
+
 # Incremental by default:
 # - We do NOT delete SCOREBOARD.md unless --clean is provided.
 # - We run a small default benchmark set to speed up iteration.
@@ -46,9 +54,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 CACHE_DIR=".cache/benchmarks"
-CACHE_VER="v1"
+CACHE_VER="v2"
 
-echo "Updating SCOREBOARD.md (incremental=${CLEAN}==0, no_cache=$NO_CACHE)..."
+echo "Updating SCOREBOARD.md (incremental=$((1-CLEAN)), no_cache=$NO_CACHE)..."
 echo "Datasets: $DATASETS"
 echo "Models:   $MODELS"
 echo "Cache:    $CACHE_DIR ($CACHE_VER)"
@@ -195,18 +203,29 @@ for m in $MODELS; do
 
     if [ "$NO_CACHE" -eq 0 ] && [ -f "$cache_file" ]; then
       echo "Cache hit: $cache_file"
-      apply_cached_metrics "$m" "$ds" "$model_name" "$cache_file"
-      continue
+      if [ "$m" = "baseline" ]; then
+        echo "Ignoring baseline cache (multiple rows)."
+      else
+        apply_cached_metrics "$m" "$ds" "$model_name" "$cache_file"
+        continue
+      fi
     fi
 
     echo "Cache miss (or disabled). Running benchmark..."
     uv run python -m "benchmarks.$m" --dataset "$ds"
 
     # Cache only final metrics written to scoreboard.
-    extract_and_cache_metrics "$m" "$ds" "$model_name" "$cache_file"
-    echo "Cached metrics: $cache_file"
+    # NOTE: `baseline` writes multiple rows (one per base model), not a single row
+    # with model="baseline", so caching by a single model_name is not possible.
+    if [ "$m" = "baseline" ]; then
+      echo "Skipping cache write for baseline (multiple rows)."
+    else
+      extract_and_cache_metrics "$m" "$ds" "$model_name" "$cache_file"
+      echo "Cached metrics: $cache_file"
+    fi
   done
 done
 
 echo ""
 echo "Done. SCOREBOARD.md updated."
+echo "Note: baseline results are not cached because it writes multiple scoreboard rows."
