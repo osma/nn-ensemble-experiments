@@ -152,6 +152,10 @@ def _mix_active_stats(
             xb = xb_cpu.to(DEVICE, non_blocking=True)
             base = model.base_logits(xb)
             delta = model.mix_delta_active(base)  # (B, L_active)
+
+            # Match the model's centering behavior used in forward():
+            delta = delta - delta.mean(dim=1, keepdim=True)
+
             a = (alpha * delta).abs().detach().cpu().reshape(-1)
 
             sum_abs += float(a.sum().item())
@@ -313,6 +317,12 @@ class MeanResidualLowRankMixEnsemble(nn.Module):
             return base
 
         delta_active = self.mix_delta_active(base)  # (B, L_active)
+
+        # Prevent the mixer from learning a degenerate global shift (e.g. "push everything down")
+        # by forcing the per-example mean correction over active labels to be exactly 0.
+        # This makes the mixer purely redistributive over active labels.
+        delta_active = delta_active - delta_active.mean(dim=1, keepdim=True)
+
         alpha = self.alpha()
 
         logits = base.clone()
@@ -397,6 +407,11 @@ def main() -> None:
         action="store_true",
         help="Print extra diagnostics (mix output magnitude and parameter norms) each epoch",
     )
+    parser.add_argument(
+        "--no-debug",
+        action="store_true",
+        help="Disable debug diagnostics (debug is enabled by default)",
+    )
     args = parser.parse_args()
 
     dataset = str(args.dataset)
@@ -406,7 +421,9 @@ def main() -> None:
     mix_rank = int(args.mix_rank)
     alpha_max = float(args.alpha_max)
     mix_weight_decay = float(args.mix_weight_decay)
-    debug = bool(args.debug)
+
+    # Default debug ON (can be disabled with --no-debug).
+    debug = (not bool(args.no_debug)) or bool(args.debug)
 
     torch.manual_seed(TRAIN_SEED)
     if DEVICE.type == "cuda":
