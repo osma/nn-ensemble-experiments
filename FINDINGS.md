@@ -88,20 +88,14 @@ We added instrumentation (`decomp_debug`) to attribute effects to base logits vs
 Stabilizers that prevented catastrophic collapse:
 - **Bounded MLP gate**: `alpha = alpha_max * sigmoid(log_alpha)` with small `alpha_max`
 - **Enable weight decay** (`AdamW(weight_decay=0.01)`) to curb rapid MLP weight growth
-- **Increase probability clamp epsilon** (`eps=1e-3`) when inspecting sigmoid probabilities (helps detect approaching saturation and makes clamp relevant earlier)
+- **Explicit penalty on applied correction**: `mean((alpha*delta_active)^2)` (keeps corrections in "logit units" small)
+- **MLP output head zero-init**: zero-init `delta_layer` so the model starts as the base residual
 
 These made the MLP contribution much smaller and stopped the “runaway suppression” behavior, though overall improvements vs the best baselines were limited.
 
-### MLP delta bias was not the primary culprit
-We suspected `delta_layer.bias` might behave like an extra per-label bias vector. Debug stats showed the main collapse was driven by **delta_layer weights and hidden activations**, not primarily by the bias term. A small bias regularizer was still added as a safety measure.
-
-### Loss experiments: prob_epsclamp vs logits
-We added a `prob_epsclamp` mode (sigmoid -> clamp -> BCELoss) because `torch_nn*` models did well with probability outputs.
-
-Empirically:
-- Switching to `prob_epsclamp` alone did **not** resolve the collapse when the MLP was unconstrained.
-- Clamp at very small eps (e.g. 1e-5) does not become active until logits are extremely negative; this was too late to prevent ranking damage.
-- The main stability gains came from gating/weight decay, not from clamp alone.
+### What did not help much (MLP)
+- Switching between `BCEWithLogitsLoss` and probability-clamped `BCELoss` (`prob_epsclamp`) did not, by itself, resolve the collapse when the MLP was unconstrained.
+- Clamp at very small eps (e.g. 1e-5) is effectively inactive until logits are extremely negative; this was too late to prevent ranking damage.
 
 ### pos_weight experiments: easy to misapply and easy to overdo
 We attempted per-label `pos_weight` (neg/pos) in `BCEWithLogitsLoss` to counteract imbalance.
@@ -119,6 +113,47 @@ Current takeaway: **pos_weight is not a free win** here; if revisited, it likely
 - the correction is added on top of a bounded baseline and then clamped again
 
 In contrast, `torch_mean_residual_mlp` operates in logit space with additional unconstrained residual/bias terms; without careful gating, this gives the MLP more room to learn degenerate global suppression.
+
+---
+
+## torch_mean_residual_lowrank_mix: what we learned
+
+`torch_mean_residual_lowrank_mix` was created as a more structured alternative to the MLP correction:
+- Base is `torch_mean_residual`-style logits model (global weights + per-label residual + bias).
+- Cross-label correction is low-rank label mixing on *active* labels:
+  \[
+    \delta = (\sigma(\text{base})_{active} U) V^T
+  \]
+  applied additively in logits.
+
+### What worked
+- **Active label restriction** (apply mixing only on `active_idx`) keeps parameter count and compute manageable and avoids wasting capacity on labels with no training signal.
+- **Per-example centering** of the mixer output over active labels:
+  - `delta_active -= delta_active.mean(dim=1, keepdim=True)`
+  prevents the mixer from learning a pure global shift across labels (the easiest BCE-improving but ranking-damaging move).
+- **Alpha gate + do-no-harm init**:
+  - initialize `V=0` so the mixer starts as an exact no-op,
+  - initialize `U` to small random values (prevents dead gradients),
+  - apply `alpha = alpha_max * sigmoid(log_alpha)` to bound the correction.
+- **Grouped optimizer decay** (weight decay applied only to mixer parameters) helped curb growth of U/V without changing the base residual dynamics.
+
+### What did not work / failure modes
+- **Dead mixer path**: initializing both `U=0` and `V=0` permanently disables learning (both get zero gradient).
+- **No alpha gate**: removing `alpha` caused unstable early training and severe degradation; the mixer output became large before the base could stabilize.
+- **Runaway after a few epochs (esp. koko)**:
+  - even with centering and alpha, the model can gradually increase `|alpha*delta|` and then performance collapses.
+  - early stopping often picks an earlier "good" epoch, but the later runaway indicates the mixer still has too much freedom.
+- **Alpha was initially not optimized**: `log_alpha` must be included in the optimizer param groups, otherwise the gate is fixed and misleading.
+
+### Alpha regularization (partial success)
+We added an explicit penalty on `alpha^2` (`lambda_alpha * alpha^2`) to discourage gate growth:
+- It successfully pushed `alpha` downward on yso-*.
+- It was not strong enough to prevent runaway on koko (alpha still increased and mixing grew).
+
+Takeaway: cross-label mixing can help (notably on koko) but needs strong safety rails:
+- bounded gate, centering, and explicit penalties (on applied delta and/or alpha/log_alpha),
+- potentially separate LR for mixer params,
+- and/or early stopping that is robust to late-epoch takeover.
 
 ---
 
