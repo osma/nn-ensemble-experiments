@@ -116,6 +116,68 @@ def _csr_avg_nnz_per_row(x: csr_matrix) -> float:
     return float(np.mean(np.diff(x.indptr)))
 
 
+def _mix_active_stats(
+    model: "MeanResidualLowRankMixEnsemble", x_cpu_subset: torch.Tensor
+) -> tuple[float, float]:
+    """
+    Compute mean(|alpha*delta_active|) and p95(|alpha*delta_active|) over a CPU subset.
+
+    We sample up to 1e6 elements for robust quantile estimation.
+    """
+    if model.n_active == 0:
+        return 0.0, 0.0
+
+    model.eval()
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x_cpu_subset),
+        batch_size=EVAL_BATCH_SIZE,
+        shuffle=False,
+        pin_memory=(DEVICE.type == "cuda"),
+    )
+
+    sum_abs = 0.0
+    n_abs = 0
+
+    max_samples = 1_000_000
+    samples: list[torch.Tensor] = []
+
+    with torch.no_grad():
+        alpha = float(model.alpha().detach().cpu().item())
+        for (xb_cpu,) in loader:
+            xb = xb_cpu.to(DEVICE, non_blocking=True)
+            base = model.base_logits(xb)
+            delta = model.mix_delta_active(base)  # (B, L_active)
+            a = (alpha * delta).abs().detach().cpu().reshape(-1)
+
+            sum_abs += float(a.sum().item())
+            n_abs += int(a.numel())
+
+            if max_samples > 0:
+                remaining = max_samples - sum(int(s.numel()) for s in samples)
+                if remaining <= 0:
+                    max_samples = 0
+                else:
+                    if a.numel() <= remaining:
+                        samples.append(a)
+                    else:
+                        idx = torch.randperm(a.numel())[:remaining]
+                        samples.append(a.index_select(0, idx))
+
+    if n_abs == 0:
+        return 0.0, 0.0
+
+    mean_abs = sum_abs / float(n_abs)
+
+    if not samples:
+        return float(mean_abs), 0.0
+
+    v = torch.cat(samples, dim=0)
+    v, _ = torch.sort(v)
+    q_idx = min(int(round(0.95 * (v.numel() - 1))), v.numel() - 1)
+    p95_abs = float(v[q_idx].item())
+    return float(mean_abs), float(p95_abs)
+
+
 class MeanResidualLowRankMixEnsemble(nn.Module):
     """
     torch_mean_residual base + low-rank label mixing residual on active labels.
@@ -312,6 +374,11 @@ def main() -> None:
         default=ALPHA_MAX,
         help="Maximum mixing gate alpha (alpha = alpha_max * sigmoid(log_alpha))",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print extra diagnostics (mix output magnitude and parameter norms) each epoch",
+    )
     args = parser.parse_args()
 
     dataset = str(args.dataset)
@@ -320,6 +387,7 @@ def main() -> None:
     lambda_mix_out = float(args.lambda_mix_out)
     mix_rank = int(args.mix_rank)
     alpha_max = float(args.alpha_max)
+    debug = bool(args.debug)
 
     torch.manual_seed(TRAIN_SEED)
     if DEVICE.type == "cuda":
@@ -476,6 +544,17 @@ def main() -> None:
         f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
         test_metrics["f1@5"] = f1
 
+        dbg = ""
+        if debug:
+            mix_mean_abs, mix_p95_abs = _mix_active_stats(model, X_train_eval)
+            with torch.no_grad():
+                u_l2 = float((model.U ** 2).mean().detach().cpu().item()) if model.n_active > 0 else 0.0
+                v_l2 = float((model.V ** 2).mean().detach().cpu().item()) if model.n_active > 0 else 0.0
+            dbg = (
+                f" mix|alpha*delta| mean={mix_mean_abs:.6f} p95={mix_p95_abs:.6f}"
+                f" U_l2={u_l2:.3e} V_l2={v_l2:.3e}"
+            )
+
         with torch.no_grad():
             w_global = model.global_w().detach().cpu().numpy().tolist()
             alpha_val = float(model.alpha().detach().cpu().item())
@@ -497,6 +576,7 @@ def main() -> None:
             f"timing train={float(t_train.dt or 0.0):.3f}s "
             f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
+            f"{dbg}"
         )
 
         current = float(train_ndcg1000)
