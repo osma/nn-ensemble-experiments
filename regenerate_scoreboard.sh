@@ -25,7 +25,7 @@ set -eu
 
 CLEAN=0
 DATASETS="yso-fi yso-en koko"
-MODELS="baseline mean mean_weighted torch_mean torch_mean_residual torch_per_label torch_per_label_l1_delta torch_lowrank_mix torch_lowrank_residual_epsclamp torch_lowrank_residual_mix_temp"
+MODELS="baseline mean mean_weighted torch_lowrank_mix torch_lowrank_residual_epsclamp torch_lowrank_residual_mix_temp torch_lowrank_residual_sigmoid torch_mean torch_mean_residual torch_nn torch_nn_simple torch_nn_simple_lr torch_nn_split torch_nn_split_per_label torch_per_label torch_per_label_l1_delta"
 NO_CACHE=0
 
 while [ "$#" -gt 0 ]; do
@@ -54,7 +54,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 CACHE_DIR=".cache/benchmarks"
-CACHE_VER="v2"
+CACHE_VER="v3"
 
 echo "Updating SCOREBOARD.md (incremental=$((1-CLEAN)), no_cache=$NO_CACHE)..."
 echo "Datasets: $DATASETS"
