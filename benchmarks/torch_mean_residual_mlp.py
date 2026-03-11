@@ -230,13 +230,15 @@ class MeanResidualMLPEnsemble(nn.Module):
                 raise ValueError("init_global must sum to a positive finite value")
             w0 = w0 / w0.sum()
 
-        self.global_w = nn.Parameter(w0)  # (M,)
+        # Global weights are represented as unconstrained logits and normalized with softmax
+        # so they are always non-negative and sum to 1.
+        self.global_logits = nn.Parameter(torch.log(w0 + 1e-12))  # (M,)
         self.delta_w = nn.Parameter(torch.zeros((n_models, n_labels), dtype=torch.float32))  # (M, L)
         self.bias = nn.Parameter(torch.zeros((n_labels,), dtype=torch.float32))  # (L,)
 
         # --- MLP correction on active labels only ---
-        # Gate alpha: start at 0.0 exactly, learnable.
-        self.log_alpha = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
+        # Gate alpha: start small (not 0) so the MLP path gets gradient signal immediately.
+        self.log_alpha = nn.Parameter(torch.tensor(-3.0, dtype=torch.float32))
 
         # MLP:
         #   flatten (M * L_active) -> hidden_dim -> L_active
@@ -258,17 +260,21 @@ class MeanResidualMLPEnsemble(nn.Module):
 
         # Hidden layer: default init is fine; it won't matter until delta_layer learns non-zero weights.
 
-        # Gate alpha starts at exactly 0.0: alpha = softplus(log_alpha) - softplus(0) -> 0 at init.
+        # Gate alpha starts small (not 0) so MLP can start learning.
+        # exp(-3) ~= 0.0498
         with torch.no_grad():
-            self.log_alpha.fill_(0.0)
+            self.log_alpha.fill_(-3.0)
 
     def alpha(self) -> torch.Tensor:
-        # Positive gating scalar with alpha(0)=0 (exactly) and smooth gradients.
-        # softplus(0) == ln(2), so subtracting it shifts to 0 at init.
-        return F.softplus(self.log_alpha) - float(np.log(2.0))
+        # Positive gating scalar with a clean gradient everywhere.
+        return torch.exp(self.log_alpha)
+
+    def global_w(self) -> torch.Tensor:
+        # Always sums to 1.
+        return torch.softmax(self.global_logits, dim=0)
 
     def effective_w(self) -> torch.Tensor:
-        return self.global_w[:, None] + self.delta_w  # (M, L)
+        return self.global_w()[:, None] + self.delta_w  # (M, L)
 
     def base_logits(self, x: torch.Tensor) -> torch.Tensor:
         w_eff = self.effective_w()  # (M, L)
@@ -556,7 +562,7 @@ def main() -> None:
 
         # Diagnostics
         with torch.no_grad():
-            w_global = model.global_w.detach().cpu().numpy().tolist()
+            w_global = model.global_w().detach().cpu().numpy().tolist()
             alpha_val = float(model.alpha().detach().cpu().item())
             delta_l2 = float(model.delta_l2().detach().cpu().item())
             bias_l2 = float(model.bias_l2().detach().cpu().item())
