@@ -665,13 +665,8 @@ def main() -> None:
                 logits, delta_active = model(xb, return_delta_active=True)
 
                 # Always train with weighted logits-BCE for stability under imbalance.
-                # Keep prob_epsclamp as an optional debug/ablation mode.
-                if loss_kind == "prob_epsclamp":
-                    probs = torch.sigmoid(logits)
-                    probs = torch.clamp(probs, min=eps, max=1.0 - eps)
-                    loss_main = criterion_prob(probs, yb)
-                else:
-                    loss_main = criterion_logits(logits, yb)
+                # (pos_weight is only supported by BCEWithLogitsLoss)
+                loss_main = criterion_logits(logits, yb)
 
                 loss_reg_delta = lambda_delta * model.delta_l2()
                 loss_reg_bias = lambda_bias * model.bias_l2()
