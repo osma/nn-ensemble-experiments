@@ -66,6 +66,8 @@ MIX_RANK = 32
 ALPHA_MAX = 0.05
 # Penalty on the *applied* mixer correction (alpha * centered_delta).
 LAMBDA_MIX_OUT_L2 = 1e-3
+# Regularize alpha itself to discourage runaway gating.
+LAMBDA_ALPHA_L2 = 1e-2
 
 TRAIN_SEED = 0
 
@@ -394,6 +396,12 @@ def main() -> None:
         help="AdamW weight_decay applied only to mixer parameters (U,V)",
     )
     parser.add_argument(
+        "--lambda-alpha",
+        type=float,
+        default=LAMBDA_ALPHA_L2,
+        help="L2 penalty strength for alpha^2 (discourages runaway gating)",
+    )
+    parser.add_argument(
         "--mix-rank",
         type=int,
         default=MIX_RANK,
@@ -415,6 +423,7 @@ def main() -> None:
     lambda_delta = float(args.lambda_delta)
     lambda_bias = float(args.lambda_bias)
     lambda_mix_out = float(args.lambda_mix_out)
+    lambda_alpha = float(args.lambda_alpha)
     mix_rank = int(args.mix_rank)
     alpha_max = float(args.alpha_max)
     mix_weight_decay = float(args.mix_weight_decay)
@@ -557,7 +566,11 @@ def main() -> None:
                     alpha = model.alpha()
                     loss_reg_mix = lambda_mix_out * (alpha * delta_active).pow(2).mean()
 
-                loss_reg = loss_reg_delta + loss_reg_bias + loss_reg_mix
+                # Discourage alpha from drifting upward (helps prevent late runaway).
+                alpha = model.alpha()
+                loss_reg_alpha = lambda_alpha * (alpha ** 2)
+
+                loss_reg = loss_reg_delta + loss_reg_bias + loss_reg_mix + loss_reg_alpha
                 loss = loss_main + loss_reg
 
                 loss.backward()
@@ -609,7 +622,7 @@ def main() -> None:
 
         print(
             f"[lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g} "
-            f"lambda_mix_out={lambda_mix_out:g} mix_rank={mix_rank}] "
+            f"lambda_mix_out={lambda_mix_out:g} lambda_alpha={lambda_alpha:g} mix_rank={mix_rank}] "
             f"Epoch {epoch:02d} | "
             f"loss={float(last_loss or 0.0):.6f} "
             f"(bce={float(last_loss_bce or 0.0):.6f} reg={float(last_loss_reg or 0.0):.6f} "
