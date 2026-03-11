@@ -279,6 +279,20 @@ def _avg3_test_score(row: dict[str, str]) -> float:
     return float(np.mean(vals))
 
 
+def _avg3_overall_score(rows_for_model: list[dict[str, str]]) -> float:
+    """
+    Overall composite score across datasets: average of the per-dataset avg3 test score.
+
+    Requirements:
+      - The model family must have a row for every dataset (enforced by caller via aggregated_rows policy).
+      - Every dataset row must have all three test metrics present (otherwise excluded).
+    """
+    scores = [_avg3_test_score(r) for r in rows_for_model]
+    if not scores or any(s == float("-inf") for s in scores):
+        return float("-inf")
+    return float(np.mean(scores))
+
+
 def update_markdown_scoreboard(
     path: Path,
     model: str,
@@ -434,6 +448,34 @@ def update_markdown_scoreboard(
         title="Top 10 Models by Avg Test F1@5 (across datasets)",
     )
 
+    # --- Overall composite Top-10 (avg of 3 test metrics, then averaged across datasets) ---
+    by_model_all: dict[str, list[dict[str, str]]] = {}
+    for r in ordered_rows:
+        fam = _model_family(r["model"])
+        is_ensemble_row = "(" in r["model"]
+        if not is_ensemble_row and fam not in keep_base_families:
+            continue
+        by_model_all.setdefault(fam, []).append(r)
+
+    composite_overall_rows: list[dict[str, str]] = []
+    for fam, rs in by_model_all.items():
+        fam_datasets = sorted({rr["dataset"] for rr in rs})
+        if fam_datasets != required_datasets:
+            continue
+
+        score = _avg3_overall_score(rs)
+        if score == float("-inf"):
+            continue
+
+        composite_overall_rows.append({"model": fam, "test avg3 all": f"{score:.6f}"})
+
+    top10_overall_avg3 = _render_top10_table(
+        composite_overall_rows,
+        sort_key="test avg3 all",
+        metric_label="Avg(Test NDCG@1000, NDCG@10, F1@5) across datasets",
+        title="Top 10 Models by Avg of 3 Test Metrics (across datasets)",
+    )
+
     # --- Per-dataset composite Top-10 (avg of 3 test metrics) ---
     per_dataset_sections: list[str] = []
     for ds in required_datasets:
@@ -474,5 +516,13 @@ def update_markdown_scoreboard(
         )
 
     path.write_text(
-        "".join(header + main_table + top10_ndcg10 + top10_ndcg1000 + top10_f1 + per_dataset_sections)
+        "".join(
+            header
+            + main_table
+            + top10_ndcg10
+            + top10_ndcg1000
+            + top10_f1
+            + top10_overall_avg3
+            + per_dataset_sections
+        )
     )
