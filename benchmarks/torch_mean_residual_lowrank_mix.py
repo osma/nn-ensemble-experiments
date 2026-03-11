@@ -62,8 +62,13 @@ LAMBDA_BIAS_L2 = 1e-3
 
 # Low-rank mixing hyperparameters
 MIX_RANK = 32
-ALPHA_MAX = 0.05
-LAMBDA_MIX_OUT_L2 = 1e-4
+# Keep the mixer very small by default. After enabling learnable U init, the mix path
+# can easily learn a degenerate "push everything down" solution under class imbalance.
+# Use a smaller gate by default; you can still raise this via --alpha-max if needed.
+ALPHA_MAX = 0.01
+# Stronger penalty on the *applied* mix output (alpha * delta_active).
+# This helps prevent early collapse while still allowing the mixer to contribute.
+LAMBDA_MIX_OUT_L2 = 1e-3
 
 TRAIN_SEED = 0
 
@@ -252,13 +257,14 @@ class MeanResidualLowRankMixEnsemble(nn.Module):
         # and both U and V receive zero gradients (dead path).
         #
         # Instead:
-        # - Initialize U to small random values so h is non-zero.
+        # - Initialize U to small random values so h is non-zero (enables gradients into V).
         # - Keep V at 0 so delta == 0 at init (strict residual / do-no-harm start).
+        # - Also start alpha smaller to avoid the mix path immediately dominating logits.
         nn.init.normal_(self.U, mean=0.0, std=1e-3)
         nn.init.zeros_(self.V)
 
         with torch.no_grad():
-            self.log_alpha.fill_(-3.0)
+            self.log_alpha.fill_(-5.0)
 
     def alpha(self) -> torch.Tensor:
         return float(self.alpha_max) * torch.sigmoid(self.log_alpha)
@@ -369,6 +375,12 @@ def main() -> None:
         help="L2 penalty strength for mean((alpha*delta_active)^2) (keeps mixing corrections small)",
     )
     parser.add_argument(
+        "--mix-weight-decay",
+        type=float,
+        default=0.01,
+        help="AdamW weight_decay applied only to mixer parameters (U,V)",
+    )
+    parser.add_argument(
         "--mix-rank",
         type=int,
         default=MIX_RANK,
@@ -393,6 +405,7 @@ def main() -> None:
     lambda_mix_out = float(args.lambda_mix_out)
     mix_rank = int(args.mix_rank)
     alpha_max = float(args.alpha_max)
+    mix_weight_decay = float(args.mix_weight_decay)
     debug = bool(args.debug)
 
     torch.manual_seed(TRAIN_SEED)
@@ -470,10 +483,20 @@ def main() -> None:
         alpha_max=alpha_max,
     ).to(DEVICE)
 
+    # Use parameter groups so we can apply weight decay only to the mixing parameters.
+    # This helps curb fast growth of U/V without changing the base residual dynamics.
     optimizer = optim.AdamW(
-        model.parameters(),
+        [
+            {
+                "params": [model.global_logits, model.delta_w, model.bias, model.log_alpha],
+                "weight_decay": WEIGHT_DECAY,
+            },
+            {
+                "params": [model.U, model.V],
+                "weight_decay": mix_weight_decay,
+            },
+        ],
         lr=LR,
-        weight_decay=WEIGHT_DECAY,
         eps=1e-8,
     )
     criterion = nn.BCEWithLogitsLoss()
