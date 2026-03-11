@@ -353,6 +353,23 @@ def main() -> None:
         help="Dataset to benchmark",
     )
     parser.add_argument(
+        "--loss",
+        type=str,
+        default="logits",
+        choices=["logits", "prob_epsclamp"],
+        help=(
+            "Training loss variant. "
+            "'logits' uses BCEWithLogitsLoss on raw logits. "
+            "'prob_epsclamp' uses sigmoid(logits) -> clamp(eps,1-eps) -> BCELoss."
+        ),
+    )
+    parser.add_argument(
+        "--eps",
+        type=float,
+        default=1e-4,
+        help="Epsilon for probability clamping when --loss=prob_epsclamp",
+    )
+    parser.add_argument(
         "--lambda-delta",
         type=float,
         default=LAMBDA_DELTA_L2,
@@ -390,6 +407,10 @@ def main() -> None:
     args = parser.parse_args()
 
     dataset = str(args.dataset)
+    loss_kind = str(args.loss)
+    eps = float(args.eps)
+    if loss_kind == "prob_epsclamp" and not (0.0 < eps < 0.5):
+        raise ValueError("--eps must satisfy 0 < eps < 0.5")
     lambda_delta = float(args.lambda_delta)
     lambda_bias = float(args.lambda_bias)
     lambda_mlp_out = float(args.lambda_mlp_out)
@@ -404,6 +425,8 @@ def main() -> None:
 
     ensemble_keys = ensemble3_keys(dataset)
     model_name = f"torch_mean_residual_mlp({','.join(ensemble_keys)})"
+    if loss_kind != "logits":
+        model_name = f"{model_name}[loss={loss_kind}]"
     scoreboard_path = Path("SCOREBOARD.md")
 
     print("Using device:", DEVICE)
@@ -483,7 +506,8 @@ def main() -> None:
         weight_decay=WEIGHT_DECAY,
         eps=1e-8,
     )
-    criterion = nn.BCEWithLogitsLoss()
+    criterion_logits = nn.BCEWithLogitsLoss()
+    criterion_prob = nn.BCELoss()
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
     train_loader = torch.utils.data.DataLoader(
@@ -517,7 +541,13 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 logits, delta_active = model(xb, return_delta_active=True)
 
-                loss_main = criterion(logits, yb)
+                if loss_kind == "prob_epsclamp":
+                    probs = torch.sigmoid(logits)
+                    probs = torch.clamp(probs, min=eps, max=1.0 - eps)
+                    loss_main = criterion_prob(probs, yb)
+                else:
+                    loss_main = criterion_logits(logits, yb)
+
                 loss_reg_delta = lambda_delta * model.delta_l2()
                 loss_reg_bias = lambda_bias * model.bias_l2()
 
@@ -587,7 +617,8 @@ def main() -> None:
             )
 
         print(
-            f"[lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g} lambda_mlp_out={lambda_mlp_out:g}] "
+            f"[loss={loss_kind}{f' eps={eps:g}' if loss_kind == 'prob_epsclamp' else ''} "
+            f"lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g} lambda_mlp_out={lambda_mlp_out:g}] "
             f"Epoch {epoch:02d} | "
             f"loss={float(last_loss or 0.0):.6f} "
             f"(bce={float(last_loss_bce or 0.0):.6f} reg={float(last_loss_reg or 0.0):.6f} "
