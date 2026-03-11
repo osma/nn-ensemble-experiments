@@ -54,7 +54,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 CACHE_DIR=".cache/benchmarks"
-CACHE_VER="v3"
+CACHE_VER="v2"
 
 echo "Updating SCOREBOARD.md (incremental=$((1-CLEAN)), no_cache=$NO_CACHE)..."
 echo "Datasets: $DATASETS"
