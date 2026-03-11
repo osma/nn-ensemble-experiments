@@ -62,7 +62,7 @@ EARLY_STOP_SEED = 1337
 
 # Base residual hyperparameters (same intent as torch_mean_residual)
 LR = 0.003
-WEIGHT_DECAY = 0.0  # rely on explicit residual penalty
+WEIGHT_DECAY = 0.01  # match torch_nn_split-style stabilization (curbs MLP weight growth)
 LAMBDA_DELTA_L2 = 1e-2  # shrinkage for per-label residual weights
 LAMBDA_BIAS_L2 = 1e-3  # shrinkage for per-label bias
 
@@ -345,8 +345,10 @@ class MeanResidualMLPEnsemble(nn.Module):
         self.bias = nn.Parameter(torch.zeros((n_labels,), dtype=torch.float32))  # (L,)
 
         # --- MLP correction on active labels only ---
-        # Gate alpha: start small (not 0) so the MLP path gets gradient signal immediately.
+        # Gate alpha: bounded to avoid MLP dominating the base model.
+        # alpha = alpha_max * sigmoid(log_alpha)
         self.log_alpha = nn.Parameter(torch.tensor(-3.0, dtype=torch.float32))
+        self.alpha_max = 0.1
 
         # MLP:
         #   flatten (M * L_active) -> hidden_dim -> L_active
@@ -368,14 +370,15 @@ class MeanResidualMLPEnsemble(nn.Module):
 
         # Hidden layer: default init is fine; it won't matter until delta_layer learns non-zero weights.
 
-        # Gate alpha starts small (not 0) so MLP can start learning.
-        # exp(-3) ~= 0.0498
+        # Gate alpha starts small but non-zero so MLP can start learning,
+        # while still being strongly bounded by alpha_max.
         with torch.no_grad():
             self.log_alpha.fill_(-3.0)
 
     def alpha(self) -> torch.Tensor:
-        # Positive gating scalar with a clean gradient everywhere.
-        return torch.exp(self.log_alpha)
+        # Bounded positive gate so the MLP cannot take over.
+        # With log_alpha=-3, sigmoid ~ 0.047, so alpha starts ~0.0047 when alpha_max=0.1.
+        return float(self.alpha_max) * torch.sigmoid(self.log_alpha)
 
     def global_w(self) -> torch.Tensor:
         # Always sums to 1.
@@ -474,7 +477,7 @@ def main() -> None:
     parser.add_argument(
         "--eps",
         type=float,
-        default=1e-5,
+        default=1e-3,
         help="Epsilon for probability clamping when --loss=prob_epsclamp",
     )
     parser.add_argument(
