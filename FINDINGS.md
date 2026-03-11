@@ -37,13 +37,15 @@ Takeaway: **No single architecture dominates all datasets**, but a few families 
 
 Pattern: start from a strong baseline, then add **small, controlled extra capacity** with a bias toward “do no harm”.
 
-### 2) Logits + BCEWithLogitsLoss is a strong default for ranking
+### 2) Logits + BCEWithLogitsLoss is a strong default for ranking (but imbalance matters)
 Models trained on **raw logits** (no output clamp/sigmoid in the model) with `BCEWithLogitsLoss`:
 - `torch_per_label`
 - `torch_per_label_l1_delta`
 - `torch_mean_residual`
 
-These are among the strongest and most stable approaches on `yso-*`. They also avoid clamp-induced gradient saturation.
+These are among the strongest and most stable approaches on `yso-*`.
+
+However, when you introduce additional degrees of freedom (e.g. an MLP correction), the **extreme class imbalance** (very sparse true labels) can create a strong optimization incentive to push scores downward to satisfy the many negatives. In such cases, additional controls are needed (bounded corrections, regularization, or different loss weighting).
 
 ### 3) Preprocessing matters (and should stay outside the model)
 Successful models generally use a fixed monotonic transform:
@@ -68,6 +70,58 @@ Takeaway: `koko` likely benefits from more “model selection per label” behav
 
 ---
 
+## torch_mean_residual_mlp: what we learned
+
+`torch_mean_residual_mlp` was created to keep the strengths of `torch_mean_residual` (strong baseline on yso-*) while adding **cross-label influence** via an MLP correction applied only to active labels (similar in spirit to `torch_nn_split`).
+
+### Observed failure mode: MLP learns a global negative suppressor (ranking collapse)
+Without strong constraints, the MLP path quickly learned large negative corrections on active labels, dominating the base logits and destroying ranking (especially on `koko`). This presented as:
+- Loss improving, while train-subset NDCG@1000 collapsed toward 0
+- `mlp_add(active)` becoming large and negative (min values reaching large magnitude)
+- MLP delta weights growing rapidly (`delta_layer.weight` magnitude increasing)
+
+This is consistent with the imbalance-driven incentive: pushing many scores down reduces BCE on negatives, but hurts top-k ranking.
+
+### Stabilization steps that helped
+We added instrumentation (`decomp_debug`) to attribute effects to base logits vs MLP contribution and to inspect parameter distributions.
+
+Stabilizers that prevented catastrophic collapse:
+- **Bounded MLP gate**: `alpha = alpha_max * sigmoid(log_alpha)` with small `alpha_max`
+- **Enable weight decay** (`AdamW(weight_decay=0.01)`) to curb rapid MLP weight growth
+- **Increase probability clamp epsilon** (`eps=1e-3`) when inspecting sigmoid probabilities (helps detect approaching saturation and makes clamp relevant earlier)
+
+These made the MLP contribution much smaller and stopped the “runaway suppression” behavior, though overall improvements vs the best baselines were limited.
+
+### MLP delta bias was not the primary culprit
+We suspected `delta_layer.bias` might behave like an extra per-label bias vector. Debug stats showed the main collapse was driven by **delta_layer weights and hidden activations**, not primarily by the bias term. A small bias regularizer was still added as a safety measure.
+
+### Loss experiments: prob_epsclamp vs logits
+We added a `prob_epsclamp` mode (sigmoid -> clamp -> BCELoss) because `torch_nn*` models did well with probability outputs.
+
+Empirically:
+- Switching to `prob_epsclamp` alone did **not** resolve the collapse when the MLP was unconstrained.
+- Clamp at very small eps (e.g. 1e-5) does not become active until logits are extremely negative; this was too late to prevent ranking damage.
+- The main stability gains came from gating/weight decay, not from clamp alone.
+
+### pos_weight experiments: easy to misapply and easy to overdo
+We attempted per-label `pos_weight` (neg/pos) in `BCEWithLogitsLoss` to counteract imbalance.
+
+Lessons:
+- It is easy to accidentally compute a weighted logits loss but still train with an unweighted prob loss (making the change ineffective).
+- Once correctly applied, aggressive per-label `pos_weight` (even capped) can substantially change optimization dynamics and may degrade ranking, especially when the baseline already encodes strong ranking signal.
+
+Current takeaway: **pos_weight is not a free win** here; if revisited, it likely needs gentler caps and/or only applying weighting on a subset of labels (e.g. active labels).
+
+### Key difference vs torch_nn_split
+`torch_nn_split` avoids the “negative runaway” behavior via multiple built-in safeties:
+- it operates in **probability space** with outputs clamped to `[0,1]`
+- it uses a strict **convex mean mixer** (softmax weights) as the baseline
+- the correction is added on top of a bounded baseline and then clamped again
+
+In contrast, `torch_mean_residual_mlp` operates in logit space with additional unconstrained residual/bias terms; without careful gating, this gives the MLP more room to learn degenerate global suppression.
+
+---
+
 ## What has not worked (or is consistently risky)
 
 ### 1) Big MLPs over flattened (models × labels) inputs are unstable / degrade ranking
@@ -77,7 +131,7 @@ The “NN correction” family tends to underperform strong linear/logit baselin
 
 Hypothesis: flattening creates huge parameter interactions; optimization focuses on calibration-like behavior rather than ranking; and/or the signal is too sparse per label.
 
-### 2) Probability-space training with hard clamp is risky
+### 2) Probability-space training with hard clamp is risky (and eps matters)
 Several experimental models output probabilities and use `BCELoss` while clamping to [0,1]. This can:
 - Saturate gradients (especially at 0/1).
 - Make learned corrections “stick” at the bounds.
@@ -85,6 +139,8 @@ Several experimental models output probabilities and use `BCELoss` while clampin
 Mitigations in code:
 - `torch_lowrank_residual_epsclamp` clamps to `[eps, 1-eps]`.
 - `torch_lowrank_residual_sigmoid` uses `sigmoid(out_lin)` then clamps to `[eps, 1-eps]`.
+
+Note: for sigmoid outputs, eps must be large enough to become relevant before logits reach extreme magnitude (e.g. `eps=1e-3` activates at ~-6.9 logits; `eps=1e-5` at ~-11.5).
 
 Despite mitigations, probability-space variants are not consistently better than logits-based approaches.
 
@@ -160,7 +216,8 @@ These are working hypotheses to guide next experiments:
 1. **Ranking improves when the model preserves relative ordering** and doesn’t overfit calibration.
 2. **Per-label independence is strong** because label spaces are huge and sparse; learning label couplings helps only when heavily regularized (low-rank).
 3. **Training in logits space** avoids clamp/sigmoid saturation and provides smoother optimization for ranking-relevant improvements.
-4. `koko` may have different signal/noise properties than `yso-*`, benefiting from stronger sparsity priors or different preprocessing.
+4. **Class imbalance interacts with extra capacity**: once a model can apply broad shifts across labels, BCE objectives can reward global suppression unless constrained.
+5. `koko` may have different signal/noise properties than `yso-*`, benefiting from stronger sparsity priors or different preprocessing.
 
 ---
 
@@ -171,25 +228,23 @@ Prioritize new models that:
 - Add capacity in controlled ways,
 - Prefer logits + BCEWithLogitsLoss unless there’s a strong reason otherwise.
 
-### A) “Per-label logits” + low-rank coupling on delta (logit-space)
-Create a logit-space variant combining:
-- `torch_per_label` (logits)
-- low-rank coupling on `(W - W0)` rather than probability-space clamp models
+### A) Prefer low-rank coupling over full MLP flattening
+The main lesson from `torch_mean_residual_mlp` is that a full flattened MLP has too many ways to learn degenerate “global shifts”.
+Prefer cross-label coupling with explicit structure:
+- low-rank mixing/residuals (as in existing `torch_lowrank_*` models)
+- low-rank delta on a strong prior (like `torch_per_label_l1_delta` but low-rank)
 
-Sketch:
-- `W = W0 + (U @ V)` where `U` is (M×R) and `V` is (R×L)
-- Loss: `BCEWithLogitsLoss` + `lambda_uv * ||U||^2 + ||V||^2` + optional L1 on delta
-This aims to keep the benefits of `torch_per_label` while enabling limited sharing across labels.
+### B) If keeping an MLP correction, keep hard safety rails
+If we continue exploring this family:
+- keep bounded `alpha` (small `alpha_max`)
+- keep weight decay for MLP parameters
+- keep decomp-style diagnostics to catch when the correction dominates
 
-### B) Sparsity variants tuned per dataset
-Since `koko` likes L1 delta:
-- Try dataset-dependent `lambda_l1` or an automatic schedule (start high → decay).
-- Consider “group sparsity” per label (encourage selecting one model per label).
-
-### C) Separate objectives for top-k vs deep-k
-Some models may optimize NDCG@10 at the expense of NDCG@1000. Consider:
-- Two-stage training (optimize logits for NDCG@1000 proxy, then fine-tune for NDCG@10 proxy).
-- Or a weighted early-stop metric blending multiple k’s.
+### C) Revisit imbalance handling carefully
+If revisiting `pos_weight`:
+- use much smaller caps (e.g. 10–20)
+- consider weighting only active labels (inactive labels get pos_weight=1)
+- or use a single global pos_weight (gentler)
 
 ### D) Reduce test-metric printing during training
 For reproducibility and to reduce human-in-the-loop leakage:
