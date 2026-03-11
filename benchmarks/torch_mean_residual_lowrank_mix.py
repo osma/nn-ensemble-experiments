@@ -246,9 +246,15 @@ class MeanResidualLowRankMixEnsemble(nn.Module):
     def reset_parameters(self) -> None:
         # Base params: delta_w and bias already start at 0 by construction.
 
-        # Mixing: start with no correction. Setting V=0 is sufficient to make delta=0,
-        # but we also zero U for cleanliness.
-        nn.init.zeros_(self.U)
+        # Mixing: start with *effective* no correction, but allow gradients to flow.
+        # If both U and V are initialized to 0, then:
+        #   h = p_active @ U == 0 and delta = h @ V^T == 0,
+        # and both U and V receive zero gradients (dead path).
+        #
+        # Instead:
+        # - Initialize U to small random values so h is non-zero.
+        # - Keep V at 0 so delta == 0 at init (strict residual / do-no-harm start).
+        nn.init.normal_(self.U, mean=0.0, std=1e-3)
         nn.init.zeros_(self.V)
 
         with torch.no_grad():
