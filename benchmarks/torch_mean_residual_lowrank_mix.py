@@ -502,7 +502,7 @@ def main() -> None:
     optimizer = optim.AdamW(
         [
             {
-                "params": [model.global_logits, model.delta_w, model.bias],
+                "params": [model.global_logits, model.delta_w, model.bias, model.log_alpha],
                 "weight_decay": WEIGHT_DECAY,
             },
             {
@@ -596,7 +596,9 @@ def main() -> None:
                 v_l2 = float((model.V ** 2).mean().detach().cpu().item()) if model.n_active > 0 else 0.0
                 u_max = float(model.U.detach().abs().max().cpu().item()) if model.n_active > 0 else 0.0
                 v_max = float(model.V.detach().abs().max().cpu().item()) if model.n_active > 0 else 0.0
+            log_alpha_val = float(model.log_alpha.detach().cpu().item())
             dbg = (
+                f" log_alpha={log_alpha_val:.6f}"
                 f" alpha={alpha_val:.6f}"
                 f" mix|alpha*delta| mean={mix_mean_abs:.6f} p95={mix_p95_abs:.6f}"
                 f" U_l2={u_l2:.3e} V_l2={v_l2:.3e} U_max={u_max:.3e} V_max={v_max:.3e}"
