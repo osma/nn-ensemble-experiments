@@ -13,8 +13,9 @@
 #
 # Safety rails:
 # - delta head is zero-initialized (V starts at 0) => no correction at init
+# - bounded scalar gate: alpha = alpha_max * sigmoid(log_alpha)
 # - per-example centering on active labels enforces zero-mean deltas (redistributive)
-# - explicit L2 penalty on the centered mixer output: mean(delta^2)
+# - explicit L2 penalty on the *applied* mixer correction: mean((alpha*delta)^2)
 #
 # Training:
 # - BCEWithLogitsLoss on logits (no pos_weight, per request)
@@ -62,8 +63,8 @@ LAMBDA_BIAS_L2 = 1e-3
 
 # Low-rank mixing hyperparameters
 MIX_RANK = 32
-# With alpha removed, the mixer is unconstrained. Keep a conservative default penalty
-# on the centered mixer output to avoid immediate instability.
+ALPHA_MAX = 0.05
+# Penalty on the *applied* mixer correction (alpha * centered_delta).
 LAMBDA_MIX_OUT_L2 = 1e-3
 
 TRAIN_SEED = 0
@@ -151,7 +152,8 @@ def _mix_active_stats(
             # Match the model's centering behavior used in forward():
             delta = delta - delta.mean(dim=1, keepdim=True)
 
-            a = delta.abs().detach().cpu().reshape(-1)
+            alpha = float(model.alpha().detach().cpu().item())
+            a = (alpha * delta).abs().detach().cpu().reshape(-1)
 
             sum_abs += float(a.sum().item())
             n_abs += int(a.numel())
@@ -237,6 +239,8 @@ class MeanResidualLowRankMixEnsemble(nn.Module):
 
         # --- Low-rank mixing residual (active labels only) ---
         self.mix_rank = int(mix_rank)
+        self.log_alpha = nn.Parameter(torch.tensor(-3.0, dtype=torch.float32))
+        self.alpha_max = float(alpha_max)
 
         # delta_active = (p_active @ U) @ V^T
         # U: (L_active, r), V: (L_active, r)
@@ -258,6 +262,13 @@ class MeanResidualLowRankMixEnsemble(nn.Module):
         # - Keep V at 0 so delta == 0 at init (strict residual / do-no-harm start).
         nn.init.normal_(self.U, mean=0.0, std=1e-3)
         nn.init.zeros_(self.V)
+
+        # Start small but non-zero, so the mixer can learn without dominating immediately.
+        with torch.no_grad():
+            self.log_alpha.fill_(-4.0)
+
+    def alpha(self) -> torch.Tensor:
+        return float(self.alpha_max) * torch.sigmoid(self.log_alpha)
 
     def global_w(self) -> torch.Tensor:
         return torch.softmax(self.global_logits, dim=0)  # (M,)
@@ -309,8 +320,10 @@ class MeanResidualLowRankMixEnsemble(nn.Module):
         # This makes the mixer purely redistributive over active labels.
         delta_active = delta_active - delta_active.mean(dim=1, keepdim=True)
 
+        alpha = self.alpha()
+
         logits = base.clone()
-        logits.index_add_(dim=1, index=self.active_idx, source=delta_active)
+        logits.index_add_(dim=1, index=self.active_idx, source=alpha * delta_active)
 
         if return_delta_active:
             return logits, delta_active
@@ -369,6 +382,12 @@ def main() -> None:
         help="L2 penalty strength for mean((alpha*delta_active)^2) (keeps mixing corrections small)",
     )
     parser.add_argument(
+        "--alpha-max",
+        type=float,
+        default=ALPHA_MAX,
+        help="Maximum mixing gate alpha (alpha = alpha_max * sigmoid(log_alpha))",
+    )
+    parser.add_argument(
         "--mix-weight-decay",
         type=float,
         default=0.01,
@@ -397,6 +416,7 @@ def main() -> None:
     lambda_bias = float(args.lambda_bias)
     lambda_mix_out = float(args.lambda_mix_out)
     mix_rank = int(args.mix_rank)
+    alpha_max = float(args.alpha_max)
     mix_weight_decay = float(args.mix_weight_decay)
 
     # Default debug ON (can be disabled with --no-debug).
@@ -474,7 +494,7 @@ def main() -> None:
         active_idx=active_idx,
         init_global=init_global,
         mix_rank=mix_rank,
-        alpha_max=1.0,  # unused (kept for signature compatibility)
+        alpha_max=alpha_max,
     ).to(DEVICE)
 
     # Use parameter groups so we can apply weight decay only to the mixing parameters.
@@ -534,8 +554,8 @@ def main() -> None:
                 if delta_active.numel() == 0:
                     loss_reg_mix = logits.new_tensor(0.0)
                 else:
-                    # Penalize the centered mixer output magnitude directly (no alpha gate).
-                    loss_reg_mix = lambda_mix_out * (delta_active).pow(2).mean()
+                    alpha = model.alpha()
+                    loss_reg_mix = lambda_mix_out * (alpha * delta_active).pow(2).mean()
 
                 loss_reg = loss_reg_delta + loss_reg_bias + loss_reg_mix
                 loss = loss_main + loss_reg
@@ -571,12 +591,14 @@ def main() -> None:
         if debug:
             mix_mean_abs, mix_p95_abs = _mix_active_stats(model, X_train_eval)
             with torch.no_grad():
+                alpha_val = float(model.alpha().detach().cpu().item())
                 u_l2 = float((model.U ** 2).mean().detach().cpu().item()) if model.n_active > 0 else 0.0
                 v_l2 = float((model.V ** 2).mean().detach().cpu().item()) if model.n_active > 0 else 0.0
                 u_max = float(model.U.detach().abs().max().cpu().item()) if model.n_active > 0 else 0.0
                 v_max = float(model.V.detach().abs().max().cpu().item()) if model.n_active > 0 else 0.0
             dbg = (
-                f" mix|delta| mean={mix_mean_abs:.6f} p95={mix_p95_abs:.6f}"
+                f" alpha={alpha_val:.6f}"
+                f" mix|alpha*delta| mean={mix_mean_abs:.6f} p95={mix_p95_abs:.6f}"
                 f" U_l2={u_l2:.3e} V_l2={v_l2:.3e} U_max={u_max:.3e} V_max={v_max:.3e}"
             )
 
