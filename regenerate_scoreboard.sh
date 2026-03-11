@@ -204,6 +204,12 @@ for m in $MODELS; do
       model_name="$(uv run python -c "from benchmarks.datasets import ensemble3_keys; e=ensemble3_keys('$ds'); print('$m(' + ','.join(e) + ')')")"
     fi
 
+    # torch_mean_residual_mlp defaults to prob_epsclamp; its scoreboard row key differs
+    # only when using a non-default loss.
+    if [ "$m" = "torch_mean_residual_mlp" ]; then
+      : # default row key is just torch_mean_residual_mlp(<keys>)
+    fi
+
     cache_file="$(cache_path "$m" "$ds")"
 
     if [ "$NO_CACHE" -eq 0 ] && [ -f "$cache_file" ]; then

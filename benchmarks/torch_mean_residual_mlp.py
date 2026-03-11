@@ -355,7 +355,7 @@ def main() -> None:
     parser.add_argument(
         "--loss",
         type=str,
-        default="logits",
+        default="prob_epsclamp",
         choices=["logits", "prob_epsclamp"],
         help=(
             "Training loss variant. "
@@ -366,7 +366,7 @@ def main() -> None:
     parser.add_argument(
         "--eps",
         type=float,
-        default=1e-4,
+        default=1e-5,
         help="Epsilon for probability clamping when --loss=prob_epsclamp",
     )
     parser.add_argument(
@@ -425,7 +425,7 @@ def main() -> None:
 
     ensemble_keys = ensemble3_keys(dataset)
     model_name = f"torch_mean_residual_mlp({','.join(ensemble_keys)})"
-    if loss_kind != "logits":
+    if loss_kind != "prob_epsclamp":
         model_name = f"{model_name}[loss={loss_kind}]"
     scoreboard_path = Path("SCOREBOARD.md")
 
