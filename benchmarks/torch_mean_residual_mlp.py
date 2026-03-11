@@ -617,7 +617,19 @@ def main() -> None:
         weight_decay=WEIGHT_DECAY,
         eps=1e-8,
     )
-    criterion_logits = nn.BCEWithLogitsLoss()
+    # --- Loss weighting for extreme class imbalance ---
+    # Per-label pos_weight (neg/pos) makes false negatives more expensive and
+    # prevents the degenerate "push everything down" solution that can tank ranking.
+    #
+    # Clamp to avoid huge weights for ultra-rare labels.
+    pos = np.asarray(y_train_true.sum(axis=0)).ravel().astype(np.float32)  # (L,)
+    n_rows = float(y_train_true.shape[0])
+    neg = n_rows - pos
+    pos_weight = neg / np.maximum(pos, 1.0)
+    pos_weight = np.minimum(pos_weight, 100.0).astype(np.float32)
+    pos_weight_t = torch.from_numpy(pos_weight).to(DEVICE)
+
+    criterion_logits = nn.BCEWithLogitsLoss(pos_weight=pos_weight_t)
     criterion_prob = nn.BCELoss()
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
@@ -652,6 +664,8 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 logits, delta_active = model(xb, return_delta_active=True)
 
+                # Always train with weighted logits-BCE for stability under imbalance.
+                # Keep prob_epsclamp as an optional debug/ablation mode.
                 if loss_kind == "prob_epsclamp":
                     probs = torch.sigmoid(logits)
                     probs = torch.clamp(probs, min=eps, max=1.0 - eps)
