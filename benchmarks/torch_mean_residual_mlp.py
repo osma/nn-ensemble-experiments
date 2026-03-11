@@ -70,6 +70,7 @@ LAMBDA_BIAS_L2 = 1e-3  # shrinkage for per-label bias
 MLP_HIDDEN_DIM = 32
 MLP_DROPOUT = 0.5
 LAMBDA_MLP_OUT_L2 = 1e-4  # penalize mean(delta_active^2) to keep corrections small
+LAMBDA_MLP_DELTA_BIAS_L2 = 1e-3  # penalize delta_layer.bias to avoid acting like an extra per-label bias
 
 # Reproducibility
 TRAIN_SEED = 0
@@ -182,6 +183,113 @@ def _delta_active_stats(
     q_idx = min(int(round(0.95 * (v.numel() - 1))), v.numel() - 1)
     p95_abs = float(v[q_idx].item())
     return float(mean_abs), float(p95_abs)
+
+
+def _tensor_stats_1d(x: torch.Tensor) -> dict[str, float]:
+    x = x.detach().reshape(-1).to(dtype=torch.float32)
+    if x.numel() == 0:
+        return {"n": 0.0}
+    # Deterministic subsample for quantiles (avoid slow/unsupported on huge tensors)
+    max_q = 2_000_000
+    if x.numel() > max_q:
+        step = int(np.ceil(x.numel() / max_q))
+        xq = x[::step]
+    else:
+        xq = x
+    return {
+        "n": float(x.numel()),
+        "mean": float(x.mean().item()),
+        "std": float(x.std(unbiased=False).item()),
+        "min": float(x.min().item()),
+        "p50": float(torch.quantile(xq, 0.50).item()),
+        "p99": float(torch.quantile(xq, 0.99).item()),
+        "max": float(x.max().item()),
+        "mean_abs": float(x.abs().mean().item()),
+    }
+
+
+def _prob_saturation_stats(p: torch.Tensor) -> dict[str, float]:
+    p = p.detach()
+    if p.numel() == 0:
+        return {"n": 0.0}
+    n = float(p.numel())
+    return {
+        "p<1e-6": float((p < 1e-6).sum().item()) / n,
+        "p<1e-4": float((p < 1e-4).sum().item()) / n,
+        "p<1e-3": float((p < 1e-3).sum().item()) / n,
+        "p>0.5": float((p > 0.5).sum().item()) / n,
+        "p>0.9": float((p > 0.9).sum().item()) / n,
+    }
+
+
+def _decomp_debug(model: "MeanResidualMLPEnsemble", x_cpu_subset: torch.Tensor, *, eps: float) -> str:
+    """
+    One-pass diagnostic on the early-stop subset to attribute failures:
+    base vs mlp contribution vs saturation.
+    """
+    model.eval()
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x_cpu_subset),
+        batch_size=EVAL_BATCH_SIZE,
+        shuffle=False,
+        pin_memory=(DEVICE.type == "cuda"),
+    )
+
+    base_chunks: list[torch.Tensor] = []
+    full_chunks: list[torch.Tensor] = []
+    mlp_chunks: list[torch.Tensor] = []
+
+    with torch.no_grad():
+        alpha = float(model.alpha().detach().cpu().item())
+        for (xb_cpu,) in loader:
+            xb = xb_cpu.to(DEVICE, non_blocking=True)
+
+            base = model.base_logits(xb)  # (B, L)
+            full = model(xb)  # (B, L)
+
+            base_chunks.append(base.detach().cpu())
+            full_chunks.append(full.detach().cpu())
+
+            if model.n_active > 0:
+                delta_active = model.mlp_delta_active(xb)  # (B, L_active)
+                mlp = (alpha * delta_active).detach().cpu()
+                mlp_chunks.append(mlp)
+
+    base_all = torch.cat(base_chunks, dim=0)
+    full_all = torch.cat(full_chunks, dim=0)
+
+    if mlp_chunks:
+        mlp_all = torch.cat(mlp_chunks, dim=0)  # only active labels
+    else:
+        mlp_all = torch.zeros((base_all.shape[0], 0), dtype=torch.float32)
+
+    # Probability view (for saturation diagnostics)
+    p = torch.sigmoid(full_all)
+    p = torch.clamp(p, min=eps, max=1.0 - eps)
+
+    b = _tensor_stats_1d(base_all)
+    f = _tensor_stats_1d(full_all)
+    if mlp_all.numel():
+        m = _tensor_stats_1d(mlp_all)
+    else:
+        m = {"n": 0.0, "mean": 0.0, "std": 0.0, "min": 0.0, "p50": 0.0, "p99": 0.0, "max": 0.0, "mean_abs": 0.0}
+    sat = _prob_saturation_stats(p)
+
+    # Parameter diagnostics (cheap, but crucial for “is it the bias?”)
+    dlb = _tensor_stats_1d(model.delta_layer.bias.detach().cpu())
+    dlw_mean_abs = float(model.delta_layer.weight.detach().abs().mean().cpu().item())
+    bb = _tensor_stats_1d(model.bias.detach().cpu())
+
+    return (
+        "\n  decomp_debug:\n"
+        f"    base_logits: mean={b['mean']:.3e} std={b['std']:.3e} p50={b['p50']:.3e} p99={b['p99']:.3e} min={b['min']:.3e} max={b['max']:.3e}\n"
+        f"    mlp_add(active): mean={m['mean']:.3e} std={m['std']:.3e} p50={m['p50']:.3e} p99={m['p99']:.3e} min={m['min']:.3e} max={m['max']:.3e} mean_abs={m['mean_abs']:.3e}\n"
+        f"    full_logits: mean={f['mean']:.3e} std={f['std']:.3e} p50={f['p50']:.3e} p99={f['p99']:.3e} min={f['min']:.3e} max={f['max']:.3e}\n"
+        f"    probs(clamped): p<1e-6={sat['p<1e-6']:.4f} p<1e-4={sat['p<1e-4']:.4f} p<1e-3={sat['p<1e-3']:.4f} p>0.5={sat['p>0.5']:.4f} p>0.9={sat['p>0.9']:.4f}\n"
+        f"    params: base_bias mean={bb['mean']:.3e} p99={bb['p99']:.3e} min={bb['min']:.3e} max={bb['max']:.3e} | "
+        f"mlp_delta_bias mean={dlb['mean']:.3e} p99={dlb['p99']:.3e} min={dlb['min']:.3e} max={dlb['max']:.3e} | "
+        f"mlp_delta_weight mean_abs={dlw_mean_abs:.3e}\n"
+    )
 
 
 class MeanResidualMLPEnsemble(nn.Module):
@@ -559,7 +667,10 @@ def main() -> None:
                     # Penalize actual applied correction magnitude.
                     loss_reg_mlp = lambda_mlp_out * (alpha * delta_active).pow(2).mean()
 
-                loss_reg = loss_reg_delta + loss_reg_bias + loss_reg_mlp
+                # Prevent delta_layer.bias from acting like an extra per-label bias vector.
+                loss_reg_mlp_bias = LAMBDA_MLP_DELTA_BIAS_L2 * (model.delta_layer.bias ** 2).mean()
+
+                loss_reg = loss_reg_delta + loss_reg_bias + loss_reg_mlp + loss_reg_mlp_bias
                 loss = loss_main + loss_reg
 
                 loss.backward()
@@ -616,6 +727,8 @@ def main() -> None:
                 f"mlp|alpha*delta| mean={delta_mean_abs:.6f} p95={delta_p95_abs:.6f}"
             )
 
+        decomp = _decomp_debug(model, X_train_eval, eps=eps)
+
         print(
             f"[loss={loss_kind}{f' eps={eps:g}' if loss_kind == 'prob_epsclamp' else ''} "
             f"lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g} lambda_mlp_out={lambda_mlp_out:g}] "
@@ -634,6 +747,7 @@ def main() -> None:
             f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
             f"{dbg}"
+            f"{decomp}"
         )
 
         current = float(train_ndcg1000)
