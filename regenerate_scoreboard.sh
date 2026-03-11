@@ -153,8 +153,13 @@ if not score_path.exists():
 
 lines = score_path.read_text().splitlines()
 row = _find_row(lines, model_name, ds)
+
+# Some benchmarks (e.g. torch_nn_simple_lr) currently print metrics but do not
+# write to SCOREBOARD.md. In that case, do not fail the whole regeneration run;
+# just skip caching and continue.
 if row is None:
-    raise SystemExit(f"Could not find scoreboard row for model={model_name!r} dataset={ds!r}")
+    print(f"WARNING: Could not find scoreboard row for model={model_name!r} dataset={ds!r}; skipping cache write.", file=sys.stderr)
+    raise SystemExit(0)
 
 def _safe_float(s: str) -> float:
     return float(s) if s else float("nan")
@@ -212,7 +217,10 @@ for m in $MODELS; do
     fi
 
     echo "Cache miss (or disabled). Running benchmark..."
-    uv run python -m "benchmarks.$m" --dataset "$ds"
+    uv run python -m "benchmarks.$m" --dataset "$ds" || {
+      echo "Benchmark failed: benchmarks.$m (dataset=$ds)" >&2
+      exit 1
+    }
 
     # Cache only final metrics written to scoreboard.
     # NOTE: `baseline` writes multiple rows (one per base model), not a single row
@@ -221,7 +229,11 @@ for m in $MODELS; do
       echo "Skipping cache write for baseline (multiple rows)."
     else
       extract_and_cache_metrics "$m" "$ds" "$model_name" "$cache_file"
-      echo "Cached metrics: $cache_file"
+      if [ -f "$cache_file" ]; then
+        echo "Cached metrics: $cache_file"
+      else
+        echo "No cache written for $m (benchmark likely did not write a scoreboard row)."
+      fi
     fi
   done
 done
