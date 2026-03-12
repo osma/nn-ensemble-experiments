@@ -223,10 +223,41 @@ for m in $MODELS; do
     fi
 
     echo "Cache miss (or disabled). Running benchmark..."
-    uv run python -m "benchmarks.$m" --dataset "$ds" || {
-      echo "Benchmark failed: benchmarks.$m (dataset=$ds)" >&2
-      exit 1
-    }
+
+    # Warm-start integration:
+    # - torch_per_label always exports: .cache/warmstarts/torch_per_label__<dataset>.best.pt
+    # - torch_nn_split_per_label can optionally consume it.
+    #
+    # IMPORTANT: The caching key does not include CLI args or warm-start file contents.
+    # Therefore, when warm-starting we bypass the cache by using a dedicated cache version.
+    if [ "$m" = "torch_nn_split_per_label" ]; then
+      ws=".cache/warmstarts/torch_per_label__${ds}.best.pt"
+
+      if [ ! -f "$ws" ]; then
+        echo "Warm-start checkpoint missing: $ws"
+        echo "Running torch_per_label first to generate warm-start checkpoint..."
+        uv run python -m "benchmarks.torch_per_label" --dataset "$ds" || {
+          echo "Benchmark failed: benchmarks.torch_per_label (dataset=$ds)" >&2
+          exit 1
+        }
+      fi
+
+      if [ ! -f "$ws" ]; then
+        echo "Warm-start checkpoint still missing after torch_per_label run: $ws" >&2
+        exit 1
+      fi
+
+      echo "Running torch_nn_split_per_label with warm start: $ws"
+      uv run python -m "benchmarks.torch_nn_split_per_label" --dataset "$ds" --warm-start-torch-per-label "$ws" || {
+        echo "Benchmark failed: benchmarks.torch_nn_split_per_label (dataset=$ds)" >&2
+        exit 1
+      }
+    else
+      uv run python -m "benchmarks.$m" --dataset "$ds" || {
+        echo "Benchmark failed: benchmarks.$m (dataset=$ds)" >&2
+        exit 1
+      }
+    fi
 
     # Cache only final metrics written to scoreboard.
     # NOTE: `baseline` writes multiple rows (one per base model), not a single row
