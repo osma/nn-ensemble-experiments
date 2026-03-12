@@ -197,9 +197,12 @@ class LowRankResidualMixActive(nn.Module):
         self.rank = int(rank)
 
         # Low-rank factors over labels (active subset)
-        # U,V init small so stage-2 starts near no-op.
+        # Init:
+        # - U small random: learns how to project label axis into rank space.
+        # - V zeros: ensures initial delta logits are exactly 0 (true no-op).
+        # - W small random: channel mixing in rank space.
         self.U = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
-        self.V = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
+        self.V = nn.Parameter(torch.zeros(self.n_active, self.rank))
 
         # Channel mixing in rank space (C -> r), elementwise per rank component.
         self.W = nn.Parameter(0.01 * torch.randn(self.n_channels, self.rank))
@@ -231,6 +234,12 @@ class LowRankResidualMixActive(nn.Module):
         # Project back to labels:
         #   delta[b,l] = sum_k h[b,k] * V[l,k]
         delta = h @ self.V.t()  # (B, L_active)
+
+        # Center residual per sample to prevent a degenerate global logit shift
+        # (which can collapse rankings by pushing all active-label logits down).
+        if delta.numel():
+            delta = delta - delta.mean(dim=1, keepdim=True)
+
         return delta
 
 
