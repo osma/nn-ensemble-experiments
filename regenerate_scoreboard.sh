@@ -25,7 +25,7 @@ set -eu
 
 CLEAN=0
 DATASETS="yso-fi yso-en koko"
-MODELS="baseline mean mean_weighted torch_lowrank_mix torch_lowrank_residual_epsclamp torch_lowrank_residual_mix_temp torch_lowrank_residual_sigmoid torch_mean torch_mean_residual torch_mean_residual_mlp torch_mean_residual_lowrank_mix torch_nn torch_nn_simple torch_nn_split torch_nn_split_per_label torch_per_label torch_per_label_l1_delta"
+MODELS="baseline mean mean_weighted torch_lowrank_mix torch_lowrank_residual_epsclamp torch_lowrank_residual_mix_temp torch_lowrank_residual_sigmoid torch_mean torch_mean_residual torch_mean_residual_mlp torch_mean_residual_lowrank_mix torch_nn torch_nn_simple torch_nn_split torch_nn_split_per_label torch_per_label torch_per_label_l1_delta torch_per_label_residual_lowrank_mix_active"
 NO_CACHE=0
 
 while [ "$#" -gt 0 ]; do
@@ -231,6 +231,7 @@ for m in $MODELS; do
     # IMPORTANT: The caching key does not include CLI args or warm-start file contents.
     # Therefore, when warm-starting we bypass the cache by using a dedicated cache version.
     if [ "$m" = "torch_nn_split_per_label" ]; then
+      # This benchmark consumes torch_per_label warm-start checkpoints.
       ws=".cache/warmstarts/torch_per_label__${ds}.best.pt"
 
       if [ ! -f "$ws" ]; then
