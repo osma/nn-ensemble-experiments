@@ -66,7 +66,8 @@ TRAIN_SEED = 0
 DELTA_GATE_INIT = 0.02
 DELTA_GATE_MAX = 0.2
 
-# Safety: clamp ungated residual logits to a reasonable bound.
+# Safety: smoothly bound ungated residual outputs to a reasonable range (via tanh).
+# (We avoid hard clamp because it can pin the residual at the bound with zero gradients.)
 DELTA_CLAMP = 0.5
 
 # MLP hyperparameters
@@ -307,16 +308,22 @@ class TwoStagePerLabelMLPActive(nn.Module):
 
         feats = torch.cat([x_active, base_logits_active.unsqueeze(1)], dim=1)  # (B, 4, L_active)
 
+        # Residual head outputs an (unbounded) per-label adjustment signal.
+        # We:
+        #  1) smoothly bound it with tanh (keeps gradients non-zero vs hard clamp),
+        #  2) apply it as a multiplicative reweighting of the *base logits* on active labels,
+        #     rather than an additive shift (reduces "push all active logits down" failure modes).
         delta_active = self.residual(feats)  # (B,L_active)
         if DELTA_CLAMP is not None:
-            delta_active = delta_active.clamp(-float(DELTA_CLAMP), float(DELTA_CLAMP))
+            delta_active = float(DELTA_CLAMP) * torch.tanh(delta_active / float(DELTA_CLAMP))
+
+        gate = self.delta_gate()
 
         out = base_logits.clone()
-        out.index_add_(
-            dim=1,
-            index=self.active_idx,
-            source=(delta_active * self.delta_gate()),
-        )
+        # Reweight active logits: out_active = base_active * (1 + gate * delta)
+        # This preserves base ordering when delta≈0 and avoids a blanket additive offset.
+        out_active = base_logits_active * (1.0 + gate * delta_active)
+        out.index_copy_(dim=1, index=self.active_idx, source=out_active)
         return out
 
 
@@ -544,9 +551,10 @@ def main() -> None:
                 feats_dbg = torch.cat([x_active_dbg, base_active.unsqueeze(1)], dim=1)
                 delta_dbg = model.residual(feats_dbg)
                 if DELTA_CLAMP is not None:
-                    delta_dbg = delta_dbg.clamp(-float(DELTA_CLAMP), float(DELTA_CLAMP))
+                    delta_dbg = float(DELTA_CLAMP) * torch.tanh(delta_dbg / float(DELTA_CLAMP))
 
                 delta_stats = _tensor_stats(delta_dbg.detach().cpu())
+                # "gated_delta" is the multiplicative term applied to base logits: (gate * delta)
                 delta_g_stats = _tensor_stats((delta_dbg * model.delta_gate()).detach().cpu())
 
                 # Parameter stats (to diagnose "delta collapses to constant" failures)
@@ -571,7 +579,7 @@ def main() -> None:
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
             f"test_f1@5={test_metrics['f1@5']:.6f} | "
-            f"delta: {_fmt_stats(delta_stats)} | gated_delta: {_fmt_stats(delta_g_stats)} | "
+            f"delta(tanh-bounded): {_fmt_stats(delta_stats)} | gated_delta(mult): {_fmt_stats(delta_g_stats)} | "
             f"h1(relu(fc1)): {_fmt_stats(h1_stats)} | "
             f"fc1.w: {_fmt_stats(fc1_stats)} | fc1.b: {_fmt_stats(fc1b_stats)} | "
             f"fc2.w: {_fmt_stats(fc2_stats)} | fc2.b: {_fmt_stats(fc2b_stats)} | "
