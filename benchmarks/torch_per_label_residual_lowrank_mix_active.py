@@ -113,9 +113,17 @@ EPOCHS_STAGE2 = 12
 TRAIN_BATCH_SIZE = 256
 EVAL_BATCH_SIZE = 512
 
-LR_STAGE2 = 1e-3
+# Stage-2 stability tweaks:
+# - Lower LR (residual mixing is sensitive; high LR quickly destroys rankings).
+# - Add a small gate on delta so the residual starts as a near-no-op and can only
+#   gradually influence logits.
+# - Add explicit L2 penalty on delta logits (weight decay alone is often insufficient).
+LR_STAGE2 = 1e-4
 WEIGHT_DECAY_STAGE2 = 0.01
 TRAIN_SEED = 0
+
+DELTA_GATE_INIT = 0.01
+LAMBDA_DELTA_L2 = 1e-3
 
 # Low-rank residual settings
 RANK = 32
@@ -256,6 +264,7 @@ class TwoStagePerLabelLowRankMixActive(nn.Module):
         base: PerLabelWeightedEnsemble,
         active_idx: torch.Tensor,  # int64
         rank: int,
+        delta_gate_init: float = DELTA_GATE_INIT,
     ):
         super().__init__()
         if active_idx.ndim != 1:
@@ -265,6 +274,10 @@ class TwoStagePerLabelLowRankMixActive(nn.Module):
         self.n_labels = int(base.n_labels)
         self.n_models = int(base.n_models)
         self.n_active = int(active_idx.numel())
+
+        # A fixed scalar gate to keep stage-2 residual influence small & stable.
+        # (Can be made learnable later if desired, but fixed is the safest default.)
+        self.delta_gate = float(delta_gate_init)
 
         self.residual = LowRankResidualMixActive(
             n_channels=N_CHANNELS,
@@ -290,7 +303,11 @@ class TwoStagePerLabelLowRankMixActive(nn.Module):
         delta_active = self.residual(feats)  # (B,L_active)
 
         out = base_logits.clone()
-        out.index_add_(dim=1, index=self.active_idx, source=delta_active)
+        out.index_add_(
+            dim=1,
+            index=self.active_idx,
+            source=(delta_active * self.delta_gate),
+        )
         return out
 
 
@@ -466,7 +483,12 @@ def main() -> None:
     print("Stage 2: low-rank cross-label residual (active labels only)")
     print("====================")
 
-    model = TwoStagePerLabelLowRankMixActive(base=base, active_idx=active_idx.to(DEVICE), rank=RANK).to(DEVICE)
+    model = TwoStagePerLabelLowRankMixActive(
+        base=base,
+        active_idx=active_idx.to(DEVICE),
+        rank=RANK,
+        delta_gate_init=DELTA_GATE_INIT,
+    ).to(DEVICE)
 
     # ---- Stage-2 debug dump (initial params) ----
     with torch.no_grad():
@@ -513,7 +535,22 @@ def main() -> None:
 
                 optimizer.zero_grad(set_to_none=True)
                 logits = model(xb)
-                loss = criterion(logits, yb)
+
+                # Explicit delta regularization (stability):
+                # Penalize the (gated) residual magnitude on active labels so the residual
+                # cannot quickly dominate and destroy ranking structure.
+                with torch.no_grad():
+                    base_logits = base(xb)
+
+                if model.n_active == 0:
+                    delta_l2 = logits.new_tensor(0.0)
+                else:
+                    logits_active = logits.index_select(dim=1, index=model.active_idx)
+                    base_active = base_logits.index_select(dim=1, index=model.active_idx)
+                    delta_active = logits_active - base_active  # includes gating
+                    delta_l2 = (delta_active * delta_active).mean()
+
+                loss = criterion(logits, yb) + (LAMBDA_DELTA_L2 * delta_l2)
                 loss.backward()
                 optimizer.step()
                 last_loss = float(loss.item())
@@ -556,7 +593,7 @@ def main() -> None:
 
         print(
             f"Stage2 Epoch {epoch:02d} | "
-            f"loss={float(last_loss or 0.0):.6f} | "
+            f"loss={float(last_loss or 0.0):.6f} (gate={DELTA_GATE_INIT:g} lambda_delta_l2={LAMBDA_DELTA_L2:g} lr={LR_STAGE2:g}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} train_ndcg@10(subset)={train_ndcg10:.6f} | "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
