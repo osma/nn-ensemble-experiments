@@ -69,8 +69,7 @@ additional scripts locally, update this table to match the remaining files.
 | `torch_per_label` | Torch | Per‑label linear ensemble (logits) + bias, BCEWithLogitsLoss, fixed log1p preprocessing; early stopping on train subset NDCG@1000; writes diagnostics JSON | [benchmarks/torch_per_label.py](benchmarks/torch_per_label.py) |
 | `torch_per_label_l1_delta` | Torch | `torch_per_label` + L1 regularization on mean(|W − W0|) (logits) | [benchmarks/torch_per_label_l1_delta.py](benchmarks/torch_per_label_l1_delta.py) |
 | `torch_per_label_residual_lowrank_mix_active` | Torch (experimental) | Two-stage: `torch_per_label` base (frozen) + active-label low-rank cross-label residual in logit space (rank=32) | [benchmarks/torch_per_label_residual_lowrank_mix_active.py](benchmarks/torch_per_label_residual_lowrank_mix_active.py) |
-| `torch_lowrank_residual` | Torch (experimental) | Low-rank per-label residual weights (cross-label coupling) trained in logits space | (script removed in this repo pruning; keep only if present) |
-| `torch_lowrank_residual_epsclamp` | Torch (experimental) | Low-rank residual ensemble trained in probability space with eps clamp (kept only if present) | [benchmarks/torch_lowrank_residual_epsclamp.py](benchmarks/torch_lowrank_residual_epsclamp.py) |
+| `torch_lowrank_residual_epsclamp` | Torch (experimental) | Low-rank residual ensemble trained in probability space with eps clamp | [benchmarks/torch_lowrank_residual_epsclamp.py](benchmarks/torch_lowrank_residual_epsclamp.py) |
 | `torch_lowrank_mix` | Torch (experimental) | Cross-label mixing only (A1), probability-space | [benchmarks/torch_lowrank_mix.py](benchmarks/torch_lowrank_mix.py) |
 | `torch_lowrank_residual_mix_temp` | Torch (experimental) | Residual + mixing with learnable scaling | [benchmarks/torch_lowrank_residual_mix_temp.py](benchmarks/torch_lowrank_residual_mix_temp.py) |
 
