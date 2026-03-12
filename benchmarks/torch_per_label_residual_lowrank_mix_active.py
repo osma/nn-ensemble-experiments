@@ -204,9 +204,6 @@ class LowRankResidualMixActive(nn.Module):
         # Channel mixing in rank space (C -> r), elementwise per rank component.
         self.W = nn.Parameter(0.01 * torch.randn(self.n_channels, self.rank))
 
-        # Per-active-label bias for the residual (start at 0).
-        self.bias = nn.Parameter(torch.zeros(self.n_active))
-
     def forward(self, feats: torch.Tensor) -> torch.Tensor:
         if feats.ndim != 3:
             raise ValueError(f"Expected feats shape (B,C,L_active), got {tuple(feats.shape)}")
@@ -232,9 +229,9 @@ class LowRankResidualMixActive(nn.Module):
         h = torch.sum(Z * self.W.unsqueeze(0), dim=1)  # (B, r)
 
         # Project back to labels:
-        #   delta[b,l] = sum_k h[b,k] * V[l,k] + bias[l]
+        #   delta[b,l] = sum_k h[b,k] * V[l,k]
         delta = h @ self.V.t()  # (B, L_active)
-        return delta + self.bias.unsqueeze(0)
+        return delta
 
 
 class TwoStagePerLabelLowRankMixActive(nn.Module):
@@ -472,7 +469,6 @@ def main() -> None:
     print(f"  residual.U:   {_fmt_stats(_tensor_stats(U))}")
     print(f"  residual.V:   {_fmt_stats(_tensor_stats(V))}")
     print(f"  residual.W:   {_fmt_stats(_tensor_stats(W))}")
-    print(f"  residual.bias:{_fmt_stats(_tensor_stats(bb))}")
 
     optimizer = optim.AdamW(
         model.residual.parameters(),
@@ -549,7 +545,6 @@ def main() -> None:
             U_s = _tensor_stats(model.residual.U.detach().cpu())
             V_s = _tensor_stats(model.residual.V.detach().cpu())
             W_s = _tensor_stats(model.residual.W.detach().cpu())
-            b_s = _tensor_stats(model.residual.bias.detach().cpu())
 
         print(
             f"Stage2 Epoch {epoch:02d} | "
@@ -559,7 +554,7 @@ def main() -> None:
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
             f"test_f1@5={test_metrics['f1@5']:.6f} | "
             f"delta_logits_active: {_fmt_stats(delta_s)} | "
-            f"U: {_fmt_stats(U_s)} | V: {_fmt_stats(V_s)} | W: {_fmt_stats(W_s)} | b: {_fmt_stats(b_s)} | "
+            f"U: {_fmt_stats(U_s)} | V: {_fmt_stats(V_s)} | W: {_fmt_stats(W_s)} | "
             f"timing train={float(t_train.dt or 0.0):.3f}s "
             f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
