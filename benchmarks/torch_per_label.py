@@ -434,6 +434,7 @@ def train_and_evaluate(
         "best_test_metrics": best_test_metrics,
         "best_n_used_train": int(best_n_used_train),
         "best_n_used_test": int(best_n_used_test),
+        "best_state": {k: v.detach().cpu() for k, v in best_state.items()},
         "timing": {
             "train_step_s": float(t_total_train_step),
             "pred_train_s": float(t_total_pred_train),
@@ -452,12 +453,6 @@ def main():
         default="yso-fi",
         choices=["yso-fi", "yso-en", "koko"],
         help="Dataset to benchmark",
-    )
-    parser.add_argument(
-        "--export-checkpoint",
-        type=str,
-        default="",
-        help="Optional path to write a warm-start checkpoint containing {'weights','bias'}.",
     )
     args = parser.parse_args()
     dataset = str(args.dataset)
@@ -562,24 +557,30 @@ def main():
 
     print("\nSaved result to SCOREBOARD.md")
 
-    # Optional: export a minimal checkpoint for warm-starting other models.
-    if str(args.export_checkpoint).strip():
-        ckpt_path = Path(args.export_checkpoint)
-        ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    # Always export a minimal checkpoint for warm-starting other models.
+    ckpt_dir = Path(".cache") / "warmstarts"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = ckpt_dir / f"torch_per_label__{dataset}.best.pt"
 
-        # Recompute best snapshot weights by re-training is expensive; instead, take the
-        # diagnostics' weight statistics? Not enough. So we export from the final model state.
-        #
-        # NOTE: In this script, `train_and_evaluate()` does not currently return the trained model.
-        # To keep this export lightweight and correct, we re-infer weights/bias by loading them
-        # from the diagnostics payload is not possible.
-        #
-        # Therefore: export is currently not supported unless we refactor train_and_evaluate()
-        # to return the best model state. (Requested as warm-start only; no refactor here.)
-        raise SystemExit(
-            "--export-checkpoint is not implemented yet. "
-            "If you want this, ask and we will refactor train_and_evaluate() to return best_state."
-        )
+    # Use the diagnostics payload (which includes no tensors) only as a reference;
+    # export weights/bias by re-loading the best snapshot state we already selected.
+    #
+    # `train_and_evaluate()` loads the best snapshot into its internal model before returning,
+    # but does not currently return the model object. To keep this change minimal and robust,
+    # we reconstruct the module and load the best snapshot from the returned result is not possible
+    # unless we also return it. Therefore, we export from the best snapshot by re-training is not ok.
+    #
+    # Minimal fix: have train_and_evaluate() include the best_state tensors for export.
+    # (Implemented below: result now includes "best_state".)
+    best_state = result["best_state"]
+    if not isinstance(best_state, dict):
+        raise TypeError("Internal error: result['best_state'] must be a state_dict-like dict.")
+
+    # Extract weights/bias from state_dict and save CPU tensors.
+    weights = best_state["weights"].detach().cpu()
+    bias = best_state["bias"].detach().cpu()
+    torch.save({"weights": weights, "bias": bias}, ckpt_path)
+    print(f"Wrote warm-start checkpoint to {ckpt_path}")
 
     diag_dir = Path("diagnostics")
     diag_dir.mkdir(parents=True, exist_ok=True)
