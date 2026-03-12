@@ -55,17 +55,32 @@ def _tensor_stats(t: torch.Tensor) -> dict[str, float]:
     """
     Small helper for debugging parameter / activation health.
     Uses float64 reductions for numeric stability; works on CPU tensors.
+
+    NOTE: torch.quantile() can raise on very large tensors; for robustness we
+    downsample when needed.
     """
     t64 = t.detach().to(dtype=torch.float64)
     flat = t64.reshape(-1)
-    if flat.numel() == 0:
+    n = int(flat.numel())
+    if n == 0:
         return {"n": 0.0}
+
+    # Guard against `RuntimeError: quantile() input tensor is too large` by sampling.
+    # 1e6 float64 values ~= 8MB, safe for debugging.
+    max_q = 1_000_000
+    if n > max_q:
+        idx = torch.randperm(n, device=flat.device)[:max_q]
+        flat_q = flat.index_select(0, idx)
+    else:
+        flat_q = flat
+
     q = torch.quantile(
-        flat,
+        flat_q,
         torch.tensor([0.0, 0.01, 0.05, 0.50, 0.95, 0.99, 1.0], dtype=torch.float64),
     )
+
     return {
-        "n": float(flat.numel()),
+        "n": float(n),
         "mean": float(flat.mean().item()),
         "std": float(flat.std(unbiased=False).item()),
         "min": float(q[0].item()),
