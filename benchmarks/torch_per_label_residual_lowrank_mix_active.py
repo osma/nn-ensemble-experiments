@@ -115,15 +115,23 @@ EVAL_BATCH_SIZE = 512
 
 # Stage-2 stability tweaks:
 # - Lower LR (residual mixing is sensitive; high LR quickly destroys rankings).
-# - Add a small gate on delta so the residual starts as a near-no-op and can only
-#   gradually influence logits.
-# - Add explicit L2 penalty on delta logits (weight decay alone is often insufficient).
+# - Use a *learnable, bounded* scalar gate on delta so the residual starts as a near-no-op
+#   but can grow if it finds a useful correction.
+# - Prefer weight decay / bounded delta over an explicit delta L2 penalty (which can
+#   overly suppress learning).
 LR_STAGE2 = 1e-4
 WEIGHT_DECAY_STAGE2 = 0.01
 TRAIN_SEED = 0
 
+# Learnable gate configuration (effective gate in (0, DELTA_GATE_MAX))
 DELTA_GATE_INIT = 0.01
-LAMBDA_DELTA_L2 = 1e-3
+DELTA_GATE_MAX = 0.2
+
+# Optional explicit delta penalty (disabled by default; re-enable if collapse returns).
+LAMBDA_DELTA_L2 = 0.0
+
+# Optional: clamp ungated residual logits to a reasonable bound for safety.
+DELTA_CLAMP = 0.5
 
 # Low-rank residual settings
 RANK = 32
@@ -207,10 +215,10 @@ class LowRankResidualMixActive(nn.Module):
         # Low-rank factors over labels (active subset)
         # Init:
         # - U small random: learns how to project label axis into rank space.
-        # - V zeros: ensures initial delta logits are exactly 0 (true no-op).
+        # - V small random (NOT zeros): allows learning to begin while staying near-no-op.
         # - W small random: channel mixing in rank space.
         self.U = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
-        self.V = nn.Parameter(torch.zeros(self.n_active, self.rank))
+        self.V = nn.Parameter(1e-3 * torch.randn(self.n_active, self.rank))
 
         # Channel mixing in rank space (C -> r), elementwise per rank component.
         self.W = nn.Parameter(0.01 * torch.randn(self.n_channels, self.rank))
@@ -275,15 +283,26 @@ class TwoStagePerLabelLowRankMixActive(nn.Module):
         self.n_models = int(base.n_models)
         self.n_active = int(active_idx.numel())
 
-        # A fixed scalar gate to keep stage-2 residual influence small & stable.
-        # (Can be made learnable later if desired, but fixed is the safest default.)
-        self.delta_gate = float(delta_gate_init)
+        # Learnable, bounded scalar gate:
+        #   gate = DELTA_GATE_MAX * sigmoid(raw_gate)
+        # Initialize raw_gate so that gate ~= delta_gate_init.
+        init = float(delta_gate_init)
+        maxv = float(DELTA_GATE_MAX)
+        if not (0.0 < init < maxv):
+            raise ValueError(f"delta_gate_init must be in (0, {maxv}), got {init}")
+
+        p = init / maxv
+        raw_init = float(np.log(p / (1.0 - p)))
+        self.raw_delta_gate = nn.Parameter(torch.tensor(raw_init, dtype=torch.float32))
 
         self.residual = LowRankResidualMixActive(
             n_channels=N_CHANNELS,
             n_active=self.n_active,
             rank=rank,
         )
+
+    def delta_gate(self) -> torch.Tensor:
+        return float(DELTA_GATE_MAX) * torch.sigmoid(self.raw_delta_gate)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -301,12 +320,14 @@ class TwoStagePerLabelLowRankMixActive(nn.Module):
         feats = torch.cat([x_active, base_logits_active.unsqueeze(1)], dim=1)  # (B, 4, L_active)
 
         delta_active = self.residual(feats)  # (B,L_active)
+        if DELTA_CLAMP is not None:
+            delta_active = delta_active.clamp(-float(DELTA_CLAMP), float(DELTA_CLAMP))
 
         out = base_logits.clone()
         out.index_add_(
             dim=1,
             index=self.active_idx,
-            source=(delta_active * self.delta_gate),
+            source=(delta_active * self.delta_gate()),
         )
         return out
 
@@ -501,9 +522,11 @@ def main() -> None:
     print(f"  residual.W:   {_fmt_stats(_tensor_stats(W))}")
 
     optimizer = optim.AdamW(
-        model.residual.parameters(),
+        [
+            {"params": model.residual.parameters(), "weight_decay": WEIGHT_DECAY_STAGE2},
+            {"params": [model.raw_delta_gate], "weight_decay": 0.0},
+        ],
         lr=LR_STAGE2,
-        weight_decay=WEIGHT_DECAY_STAGE2,
         eps=1e-8,
     )
     criterion = nn.BCEWithLogitsLoss()
@@ -536,21 +559,23 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 logits = model(xb)
 
-                # Explicit delta regularization (stability):
-                # Penalize the (gated) residual magnitude on active labels so the residual
-                # cannot quickly dominate and destroy ranking structure.
-                with torch.no_grad():
-                    base_logits = base(xb)
+                delta_l2 = logits.new_tensor(0.0)
+                if LAMBDA_DELTA_L2:
+                    # Optional explicit delta regularization (stability):
+                    # Penalize the (gated) residual magnitude on active labels so the residual
+                    # cannot quickly dominate and destroy ranking structure.
+                    with torch.no_grad():
+                        base_logits = base(xb)
 
-                if model.n_active == 0:
-                    delta_l2 = logits.new_tensor(0.0)
-                else:
-                    logits_active = logits.index_select(dim=1, index=model.active_idx)
-                    base_active = base_logits.index_select(dim=1, index=model.active_idx)
-                    delta_active = logits_active - base_active  # includes gating
-                    delta_l2 = (delta_active * delta_active).mean()
+                    if model.n_active == 0:
+                        delta_l2 = logits.new_tensor(0.0)
+                    else:
+                        logits_active = logits.index_select(dim=1, index=model.active_idx)
+                        base_active = base_logits.index_select(dim=1, index=model.active_idx)
+                        delta_active = logits_active - base_active  # includes gating
+                        delta_l2 = (delta_active * delta_active).mean()
 
-                loss = criterion(logits, yb) + (LAMBDA_DELTA_L2 * delta_l2)
+                loss = criterion(logits, yb) + (float(LAMBDA_DELTA_L2) * delta_l2)
                 loss.backward()
                 optimizer.step()
                 last_loss = float(loss.item())
@@ -591,9 +616,12 @@ def main() -> None:
             V_s = _tensor_stats(model.residual.V.detach().cpu())
             W_s = _tensor_stats(model.residual.W.detach().cpu())
 
+        with torch.no_grad():
+            gate_val = float(model.delta_gate().detach().cpu().item())
+
         print(
             f"Stage2 Epoch {epoch:02d} | "
-            f"loss={float(last_loss or 0.0):.6f} (gate={DELTA_GATE_INIT:g} lambda_delta_l2={LAMBDA_DELTA_L2:g} lr={LR_STAGE2:g}) | "
+            f"loss={float(last_loss or 0.0):.6f} (gate={gate_val:.6f} gate_max={DELTA_GATE_MAX:g} delta_clamp={DELTA_CLAMP} lambda_delta_l2={LAMBDA_DELTA_L2:g} lr={LR_STAGE2:g}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} train_ndcg@10(subset)={train_ndcg10:.6f} | "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
