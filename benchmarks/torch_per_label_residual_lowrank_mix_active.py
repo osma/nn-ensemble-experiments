@@ -124,7 +124,8 @@ WEIGHT_DECAY_STAGE2 = 0.01
 TRAIN_SEED = 0
 
 # Learnable gate configuration (effective gate in (0, DELTA_GATE_MAX))
-DELTA_GATE_INIT = 0.01
+# Increased from 0.01 -> 0.05 so Stage-2 starts with a non-negligible effect.
+DELTA_GATE_INIT = 0.05
 DELTA_GATE_MAX = 0.2
 
 # Optional explicit delta penalty (disabled by default; re-enable if collapse returns).
@@ -218,7 +219,8 @@ class LowRankResidualMixActive(nn.Module):
         # - V small random (NOT zeros): allows learning to begin while staying near-no-op.
         # - W small random: channel mixing in rank space.
         self.U = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
-        self.V = nn.Parameter(1e-3 * torch.randn(self.n_active, self.rank))
+        # Increased init scale so residual logits are not vanishingly small at start.
+        self.V = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
 
         # Channel mixing in rank space (C -> r), elementwise per rank component.
         self.W = nn.Parameter(0.01 * torch.randn(self.n_channels, self.rank))
@@ -621,7 +623,7 @@ def main() -> None:
 
         print(
             f"Stage2 Epoch {epoch:02d} | "
-            f"loss={float(last_loss or 0.0):.6f} (gate={gate_val:.6f} gate_max={DELTA_GATE_MAX:g} delta_clamp={DELTA_CLAMP} lambda_delta_l2={LAMBDA_DELTA_L2:g} lr={LR_STAGE2:g}) | "
+            f"loss={float(last_loss or 0.0):.6f} (gate={gate_val:.8f} gate_max={DELTA_GATE_MAX:g} delta_clamp={DELTA_CLAMP} lambda_delta_l2={LAMBDA_DELTA_L2:g} lr={LR_STAGE2:g}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} train_ndcg@10(subset)={train_ndcg10:.6f} | "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
