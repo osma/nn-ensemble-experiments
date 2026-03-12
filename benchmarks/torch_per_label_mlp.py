@@ -548,8 +548,17 @@ def main() -> None:
 
                 delta_stats = _tensor_stats(delta_dbg.detach().cpu())
                 delta_g_stats = _tensor_stats((delta_dbg * model.delta_gate()).detach().cpu())
+
+                # Parameter stats (to diagnose "delta collapses to constant" failures)
                 fc1_stats = _tensor_stats(model.residual.fc1.weight.detach().cpu())
+                fc1b_stats = _tensor_stats(model.residual.fc1.bias.detach().cpu())
                 fc2_stats = _tensor_stats(model.residual.fc2.weight.detach().cpu())
+                fc2b_stats = _tensor_stats(model.residual.fc2.bias.detach().cpu())
+
+                # Activation stats (to see whether fc1 output is saturating / dead)
+                flat_dbg = model.residual.flatten(feats_dbg)
+                h1_dbg = torch.relu(model.residual.fc1(flat_dbg))
+                h1_stats = _tensor_stats(h1_dbg.detach().cpu())
 
         epoch_dt = time.perf_counter() - epoch_t0
 
@@ -563,7 +572,9 @@ def main() -> None:
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
             f"test_f1@5={test_metrics['f1@5']:.6f} | "
             f"delta: {_fmt_stats(delta_stats)} | gated_delta: {_fmt_stats(delta_g_stats)} | "
-            f"fc1.w: {_fmt_stats(fc1_stats)} | fc2.w: {_fmt_stats(fc2_stats)} | "
+            f"h1(relu(fc1)): {_fmt_stats(h1_stats)} | "
+            f"fc1.w: {_fmt_stats(fc1_stats)} | fc1.b: {_fmt_stats(fc1b_stats)} | "
+            f"fc2.w: {_fmt_stats(fc2_stats)} | fc2.b: {_fmt_stats(fc2b_stats)} | "
             f"timing train={float(t_train.dt or 0.0):.3f}s "
             f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s "
