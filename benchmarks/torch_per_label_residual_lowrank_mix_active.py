@@ -464,7 +464,6 @@ def main() -> None:
         U = model.residual.U.detach().cpu()
         V = model.residual.V.detach().cpu()
         W = model.residual.W.detach().cpu()
-        bb = model.residual.bias.detach().cpu()
     print("\nStage 2 debug | initial residual parameters")
     print(f"  residual.U:   {_fmt_stats(_tensor_stats(U))}")
     print(f"  residual.V:   {_fmt_stats(_tensor_stats(V))}")
