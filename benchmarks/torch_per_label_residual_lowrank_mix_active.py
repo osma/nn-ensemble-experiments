@@ -253,11 +253,6 @@ class LowRankResidualMixActive(nn.Module):
         #   delta[b,l] = sum_k h[b,k] * V[l,k]
         delta = h @ self.V.t()  # (B, L_active)
 
-        # Center residual per sample to prevent a degenerate global logit shift
-        # (which can collapse rankings by pushing all active-label logits down).
-        if delta.numel():
-            delta = delta - delta.mean(dim=1, keepdim=True)
-
         return delta
 
 
