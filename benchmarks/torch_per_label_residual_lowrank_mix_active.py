@@ -50,6 +50,42 @@ from benchmarks.torch_per_label import (
 
 DEVICE = get_device()
 
+
+def _tensor_stats(t: torch.Tensor) -> dict[str, float]:
+    """
+    Small helper for debugging parameter / activation health.
+    Uses float64 reductions for numeric stability; works on CPU tensors.
+    """
+    t64 = t.detach().to(dtype=torch.float64)
+    flat = t64.reshape(-1)
+    if flat.numel() == 0:
+        return {"n": 0.0}
+    q = torch.quantile(
+        flat,
+        torch.tensor([0.0, 0.01, 0.05, 0.50, 0.95, 0.99, 1.0], dtype=torch.float64),
+    )
+    return {
+        "n": float(flat.numel()),
+        "mean": float(flat.mean().item()),
+        "std": float(flat.std(unbiased=False).item()),
+        "min": float(q[0].item()),
+        "p01": float(q[1].item()),
+        "p05": float(q[2].item()),
+        "p50": float(q[3].item()),
+        "p95": float(q[4].item()),
+        "p99": float(q[5].item()),
+        "max": float(q[6].item()),
+    }
+
+
+def _fmt_stats(s: dict[str, float]) -> str:
+    if not s or s.get("n", 0.0) == 0.0:
+        return "n=0"
+    return (
+        f"mean={s['mean']:.4g} std={s['std']:.4g} "
+        f"min={s['min']:.4g} p50={s['p50']:.4g} p95={s['p95']:.4g} max={s['max']:.4g}"
+    )
+
 # Match torch_per_label defaults / policy
 K_VALUES = (10, 1000)
 PATIENCE = 2
@@ -352,6 +388,29 @@ def main() -> None:
     base_weights = best_state["weights"]
     base_bias = best_state["bias"]
 
+    # ---- Stage-1 debug dump (always) ----
+    # Helps diagnose cases where stage-2 diverges due to a pathological stage-1 solution.
+    with torch.no_grad():
+        w_cpu = base_weights.detach().cpu()
+        b_cpu = base_bias.detach().cpu()
+
+        w_stats = _tensor_stats(w_cpu)
+        b_stats = _tensor_stats(b_cpu)
+        w_mean_per_model = w_cpu.mean(dim=1).to(dtype=torch.float64).numpy().tolist()
+        w_abs_mean_per_model = w_cpu.abs().mean(dim=1).to(dtype=torch.float64).numpy().tolist()
+        w_neg = int((w_cpu < 0).sum().item())
+
+        dominant = torch.argmax(w_cpu, dim=0)
+        dominant_counts = torch.bincount(dominant, minlength=w_cpu.shape[0]).to(dtype=torch.int64)
+        dominant_frac = (dominant_counts.to(dtype=torch.float64) / float(w_cpu.shape[1])).numpy().tolist()
+
+    print("\nStage 1 debug | per-label base parameters (best snapshot)")
+    print(f"  base.weights: {_fmt_stats(w_stats)} | n_negative={w_neg}")
+    print(f"  base.bias:    {_fmt_stats(b_stats)}")
+    print(f"  base.weights per-model mean:      {', '.join(f'{v:.6f}' for v in w_mean_per_model)}")
+    print(f"  base.weights per-model mean|abs|: {', '.join(f'{v:.6f}' for v in w_abs_mean_per_model)}")
+    print(f"  base.weights dominant model frac: {', '.join(f'{v:.4f}' for v in dominant_frac)}")
+
     # Export checkpoint (same location as torch_per_label) for reuse / debugging.
     ckpt_dir = Path(".cache") / "warmstarts"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -372,6 +431,13 @@ def main() -> None:
     base.requires_grad_(False)
     base.eval()
 
+    # Quick consistency check: ensure loaded module produces finite outputs.
+    with torch.no_grad():
+        xb0 = X_train_eval[: min(8, int(X_train_eval.shape[0]))].to(DEVICE, non_blocking=True)
+        logits0 = base(xb0).detach().cpu()
+        s0 = _tensor_stats(logits0)
+    print(f"Stage 1 debug | base logits on small train subset: {_fmt_stats(s0)}")
+
     # -----------------
     # Stage 2: residual
     # -----------------
@@ -380,6 +446,18 @@ def main() -> None:
     print("====================")
 
     model = TwoStagePerLabelLowRankMixActive(base=base, active_idx=active_idx.to(DEVICE), rank=RANK).to(DEVICE)
+
+    # ---- Stage-2 debug dump (initial params) ----
+    with torch.no_grad():
+        U = model.residual.U.detach().cpu()
+        V = model.residual.V.detach().cpu()
+        W = model.residual.W.detach().cpu()
+        bb = model.residual.bias.detach().cpu()
+    print("\nStage 2 debug | initial residual parameters")
+    print(f"  residual.U:   {_fmt_stats(_tensor_stats(U))}")
+    print(f"  residual.V:   {_fmt_stats(_tensor_stats(V))}")
+    print(f"  residual.W:   {_fmt_stats(_tensor_stats(W))}")
+    print(f"  residual.bias:{_fmt_stats(_tensor_stats(bb))}")
 
     optimizer = optim.AdamW(
         model.residual.parameters(),
@@ -439,6 +517,25 @@ def main() -> None:
         f1, _ = f1_at_k_dense(y_test_true, test_logits, k=5)
         test_metrics["f1@5"] = f1
 
+        # --- More debug: residual magnitude + parameter health ---
+        # Compute delta logits stats on the eval subset (cheap, helps catch divergence).
+        with torch.no_grad():
+            if model.n_active == 0:
+                delta_s = {"n": 0.0}
+            else:
+                xb_dbg = X_train_eval.to(DEVICE, non_blocking=True)
+                base_logits_dbg = base(xb_dbg)
+                x_active_dbg = xb_dbg.index_select(dim=2, index=model.active_idx)
+                base_logits_active_dbg = base_logits_dbg.index_select(dim=1, index=model.active_idx)
+                feats_dbg = torch.cat([x_active_dbg, base_logits_active_dbg.unsqueeze(1)], dim=1)
+                delta_dbg = model.residual(feats_dbg).detach().cpu()
+                delta_s = _tensor_stats(delta_dbg)
+
+            U_s = _tensor_stats(model.residual.U.detach().cpu())
+            V_s = _tensor_stats(model.residual.V.detach().cpu())
+            W_s = _tensor_stats(model.residual.W.detach().cpu())
+            b_s = _tensor_stats(model.residual.bias.detach().cpu())
+
         print(
             f"Stage2 Epoch {epoch:02d} | "
             f"loss={float(last_loss or 0.0):.6f} | "
@@ -446,6 +543,8 @@ def main() -> None:
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
             f"test_f1@5={test_metrics['f1@5']:.6f} | "
+            f"delta_logits_active: {_fmt_stats(delta_s)} | "
+            f"U: {_fmt_stats(U_s)} | V: {_fmt_stats(V_s)} | W: {_fmt_stats(W_s)} | b: {_fmt_stats(b_s)} | "
             f"timing train={float(t_train.dt or 0.0):.3f}s "
             f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
             f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
