@@ -38,7 +38,7 @@ from scipy.sparse import csr_matrix
 
 from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
 from benchmarks.device import get_device
-from benchmarks.metrics import load_csr, ndcg_at_k_dense, f1_at_k_dense, update_markdown_scoreboard
+from benchmarks.metrics import f1_at_k_dense, load_csr, ndcg_at_k_dense, update_markdown_scoreboard
 from benchmarks.torch_per_label import (
     PerLabelWeightedEnsemble,
     train_and_evaluate as train_per_label_and_eval,
@@ -317,6 +317,10 @@ class TwoStagePerLabelMLPActive(nn.Module):
         if DELTA_CLAMP is not None:
             delta_active = float(DELTA_CLAMP) * torch.tanh(delta_active / float(DELTA_CLAMP))
 
+        # Center per sample to prevent uniform scaling/shifting of the entire active-label block.
+        # This constrains the residual to "redistribute" scores among active labels.
+        delta_active = delta_active - delta_active.mean(dim=1, keepdim=True)
+
         gate = self.delta_gate()
 
         out = base_logits.clone()
@@ -553,6 +557,9 @@ def main() -> None:
                 if DELTA_CLAMP is not None:
                     delta_dbg = float(DELTA_CLAMP) * torch.tanh(delta_dbg / float(DELTA_CLAMP))
 
+                # Match forward(): center per sample before applying the gate/reweighting.
+                delta_dbg = delta_dbg - delta_dbg.mean(dim=1, keepdim=True)
+
                 delta_stats = _tensor_stats(delta_dbg.detach().cpu())
                 # "gated_delta" is the multiplicative term applied to base logits: (gate * delta)
                 delta_g_stats = _tensor_stats((delta_dbg * model.delta_gate()).detach().cpu())
@@ -579,7 +586,7 @@ def main() -> None:
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
             f"test_f1@5={test_metrics['f1@5']:.6f} | "
-            f"delta(tanh-bounded): {_fmt_stats(delta_stats)} | gated_delta(mult): {_fmt_stats(delta_g_stats)} | "
+            f"delta(tanh-bounded, centered): {_fmt_stats(delta_stats)} | gated_delta(mult): {_fmt_stats(delta_g_stats)} | "
             f"h1(relu(fc1)): {_fmt_stats(h1_stats)} | "
             f"fc1.w: {_fmt_stats(fc1_stats)} | fc1.b: {_fmt_stats(fc1b_stats)} | "
             f"fc2.w: {_fmt_stats(fc2_stats)} | fc2.b: {_fmt_stats(fc2b_stats)} | "
