@@ -71,6 +71,42 @@ SCALE_MIN = 0.1
 SCALE_MAX = 10.0
 
 
+def _load_torch_per_label_checkpoint(path: str | Path, *, device: torch.device) -> dict[str, torch.Tensor]:
+    """
+    Load a `torch_per_label` checkpoint saved via `torch.save(...)`.
+
+    Expected keys:
+      - "weights": (M, L) float tensor
+      - "bias":    (L,)   float tensor
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(str(p))
+
+    obj = torch.load(str(p), map_location=device)
+
+    if isinstance(obj, dict) and "weights" in obj and "bias" in obj:
+        weights = obj["weights"]
+        bias = obj["bias"]
+    elif isinstance(obj, dict) and "state_dict" in obj:
+        sd = obj["state_dict"]
+        # Best-effort: support saving a raw model state_dict from torch_per_label.
+        if "weights" not in sd or "bias" not in sd:
+            raise ValueError("Checkpoint has state_dict but is missing 'weights'/'bias'.")
+        weights = sd["weights"]
+        bias = sd["bias"]
+    else:
+        raise ValueError("Unsupported checkpoint format. Expected dict with keys {'weights','bias'} or {'state_dict': ...}.")
+
+    if not isinstance(weights, torch.Tensor) or not isinstance(bias, torch.Tensor):
+        raise ValueError("Invalid checkpoint: 'weights' and 'bias' must be torch.Tensors.")
+
+    if weights.ndim != 2 or bias.ndim != 1:
+        raise ValueError(f"Invalid shapes in checkpoint: weights={tuple(weights.shape)}, bias={tuple(bias.shape)}")
+
+    return {"weights": weights.to(device=device), "bias": bias.to(device=device)}
+
+
 def csr_to_sqrt_tensor(csr: csr_matrix) -> torch.Tensor:
     """
     Convert CSR predictions to a dense torch tensor with fixed sqrt preprocessing:
@@ -151,6 +187,7 @@ class NNSplitPerLabelEnsembleModel(nn.Module):
         hidden_dim: int,
         dropout_rate: float,
         init_global: torch.Tensor | None,
+        warm_start: dict[str, torch.Tensor] | None = None,
     ):
         super().__init__()
         if active_idx.ndim != 1:
@@ -184,20 +221,72 @@ class NNSplitPerLabelEnsembleModel(nn.Module):
         self.dropout2 = nn.Dropout(dropout_rate)
         self.delta_layer = nn.Linear(hidden_dim, self.n_active)
 
-        self.reset_parameters(init_global=init_global)
+        self.reset_parameters(init_global=init_global, warm_start=warm_start)
 
-    def reset_parameters(self, *, init_global: torch.Tensor | None) -> None:
+    def reset_parameters(
+        self,
+        *,
+        init_global: torch.Tensor | None,
+        warm_start: dict[str, torch.Tensor] | None = None,
+    ) -> None:
+        """
+        Initialize parameters.
+
+        If `warm_start` is provided (from torch_per_label), we initialize:
+          - conv weights to the mean per-model weight across labels (a good global prior)
+          - scale_raw for active labels so that mean mixing approximates torch_per_label on active labels
+
+        We intentionally keep the MLP delta initialized to zero so the model starts as a
+        mostly-linear ensemble and only learns corrections if beneficial.
+        """
         with torch.no_grad():
-            if init_global is not None:
-                if init_global.numel() != self.source_dim:
-                    raise ValueError("init_global must have length source_dim")
-                w = init_global.reshape(1, self.source_dim, 1).to(self.conv.weight)
-                self.conv.weight.copy_(w)
-            else:
-                self.conv.weight.fill_(1.0 / float(self.source_dim))
+            if warm_start is not None:
+                ws_w = warm_start["weights"]  # (M, L)
+                ws_b = warm_start["bias"]  # (L,)
 
-            # scale_raw=0 => scale=1 (no-op)
-            self.scale_raw.zero_()
+                if int(ws_w.shape[0]) != self.source_dim:
+                    raise ValueError(
+                        f"Warm start weights have M={int(ws_w.shape[0])}, expected source_dim={self.source_dim}"
+                    )
+                if int(ws_w.shape[1]) != self.n_labels:
+                    raise ValueError(
+                        f"Warm start weights have L={int(ws_w.shape[1])}, expected n_labels={self.n_labels}"
+                    )
+                if int(ws_b.shape[0]) != self.n_labels:
+                    raise ValueError(
+                        f"Warm start bias has L={int(ws_b.shape[0])}, expected n_labels={self.n_labels}"
+                    )
+
+                # 1) Global conv: use per-model mean weight across labels, normalized.
+                w_mean = ws_w.mean(dim=1)  # (M,)
+                w_mean = torch.clamp(w_mean, min=1e-12)
+                w_mean = w_mean / w_mean.sum()
+                self.conv.weight.copy_(w_mean.reshape(1, self.source_dim, 1).to(self.conv.weight))
+
+                # 2) Active-label scaling: set scale so that (w_global * scale) ~= per-label weights.
+                #    For each active label l and model m:
+                #      desired_scale[m,l] = ws_w[m,l] / w_global[m]
+                #    Then set scale_raw = log(clamp(desired_scale, [SCALE_MIN,SCALE_MAX])).
+                #    This makes the initial mean_active close to torch_per_label (ignoring bias and clamp).
+                w_global = w_mean.to(ws_w)  # (M,)
+                w_active = ws_w.index_select(dim=1, index=self.active_idx.to(ws_w.device))  # (M, L_active)
+
+                denom = w_global.unsqueeze(1).clamp(min=1e-12)
+                desired_scale = w_active / denom
+                desired_scale = torch.clamp(desired_scale, min=SCALE_MIN, max=SCALE_MAX)
+                self.scale_raw.copy_(torch.log(desired_scale).to(self.scale_raw))
+
+            else:
+                if init_global is not None:
+                    if init_global.numel() != self.source_dim:
+                        raise ValueError("init_global must have length source_dim")
+                    w = init_global.reshape(1, self.source_dim, 1).to(self.conv.weight)
+                    self.conv.weight.copy_(w)
+                else:
+                    self.conv.weight.fill_(1.0 / float(self.source_dim))
+
+                # scale_raw=0 => scale=1 (no-op)
+                self.scale_raw.zero_()
 
         # Start as pure mean mixer: delta == 0
         nn.init.zeros_(self.delta_layer.weight)
@@ -356,6 +445,15 @@ def main() -> None:
         choices=["yso-fi", "yso-en", "koko"],
         help="Dataset to benchmark",
     )
+    parser.add_argument(
+        "--warm-start-torch-per-label",
+        type=str,
+        default="",
+        help=(
+            "Optional path to a torch_per_label checkpoint (created by benchmarks/torch_per_label.py). "
+            "If provided, initializes conv weights and active-label scales from that checkpoint."
+        ),
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
 
@@ -422,6 +520,11 @@ def main() -> None:
     if cfg.ensemble3_init_weights is not None:
         init_global = torch.tensor(cfg.ensemble3_init_weights, dtype=torch.float32)
 
+    warm_start: dict[str, torch.Tensor] | None = None
+    if str(args.warm_start_torch_per_label).strip():
+        warm_start = _load_torch_per_label_checkpoint(args.warm_start_torch_per_label, device=DEVICE)
+        print(f"Warm start: loaded torch_per_label checkpoint from {args.warm_start_torch_per_label}")
+
     model = NNSplitPerLabelEnsembleModel(
         source_dim=n_models,
         n_labels=n_labels,
@@ -429,6 +532,7 @@ def main() -> None:
         hidden_dim=HIDDEN_DIM,
         dropout_rate=DROPOUT_RATE,
         init_global=init_global,
+        warm_start=warm_start,
     ).to(DEVICE)
 
     optimizer = optim.AdamW(

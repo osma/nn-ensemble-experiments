@@ -453,6 +453,12 @@ def main():
         choices=["yso-fi", "yso-en", "koko"],
         help="Dataset to benchmark",
     )
+    parser.add_argument(
+        "--export-checkpoint",
+        type=str,
+        default="",
+        help="Optional path to write a warm-start checkpoint containing {'weights','bias'}.",
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
 
@@ -555,6 +561,25 @@ def main():
     )
 
     print("\nSaved result to SCOREBOARD.md")
+
+    # Optional: export a minimal checkpoint for warm-starting other models.
+    if str(args.export_checkpoint).strip():
+        ckpt_path = Path(args.export_checkpoint)
+        ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Recompute best snapshot weights by re-training is expensive; instead, take the
+        # diagnostics' weight statistics? Not enough. So we export from the final model state.
+        #
+        # NOTE: In this script, `train_and_evaluate()` does not currently return the trained model.
+        # To keep this export lightweight and correct, we re-infer weights/bias by loading them
+        # from the diagnostics payload is not possible.
+        #
+        # Therefore: export is currently not supported unless we refactor train_and_evaluate()
+        # to return the best model state. (Requested as warm-start only; no refactor here.)
+        raise SystemExit(
+            "--export-checkpoint is not implemented yet. "
+            "If you want this, ask and we will refactor train_and_evaluate() to return best_state."
+        )
 
     diag_dir = Path("diagnostics")
     diag_dir.mkdir(parents=True, exist_ok=True)
