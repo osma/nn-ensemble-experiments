@@ -84,6 +84,10 @@ To update the scoreboard:
 ./regenerate_scoreboard.sh
 ```
 
+```bash
+./regenerate_scoreboard.sh --models baseline,mean_weighted,torch_per_label,torch_per_label_residual_lowrank_mix_active
+```
+
 By default this runs a **small, fast** benchmark set and **updates incrementally**
 (it does not delete `SCOREBOARD.md`).
 
