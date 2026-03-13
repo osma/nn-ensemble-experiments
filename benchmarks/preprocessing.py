@@ -13,5 +13,15 @@ def csr_to_log1p_tensor(csr: csr_matrix) -> torch.Tensor:
     return torch.log1p(torch.clamp(x, min=0.0))
 
 
+def csr_to_raw_tensor(csr: csr_matrix) -> torch.Tensor:
+    """
+    Convert a CSR matrix to a dense torch tensor with NO preprocessing.
+
+    Assumes CSR values are already valid raw scores (guaranteed non-negative and
+    in [0, 1] per repo policy for torch_3stage stage-1).
+    """
+    return torch.from_numpy(csr.toarray()).float()
+
+
 def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
     return csr_matrix(t.detach().cpu().numpy())
