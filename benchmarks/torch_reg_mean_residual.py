@@ -341,10 +341,6 @@ def main() -> None:
             mean_abs_delta_per_model = model.delta_w.detach().abs().mean(dim=1).cpu().numpy()
             max_abs_delta_per_model = model.delta_w.detach().abs().amax(dim=1).cpu().numpy()
 
-            bias_l2 = float(model.bias_l2().detach().cpu().item())
-            mean_abs_bias = float(model.bias.detach().abs().mean().cpu().item())
-            max_abs_bias = float(model.bias.detach().abs().max().cpu().item())
-
             # Global weights (softmax-normalized; sums to 1)
             w_global = torch.softmax(model._global_logits.detach(), dim=0)
 
