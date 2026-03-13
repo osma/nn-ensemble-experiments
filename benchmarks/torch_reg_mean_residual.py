@@ -3,15 +3,15 @@
 #          model to predict numeric targets (0/1) with an unbounded score output.
 #
 # Rationale:
-# - Identical architecture to torch_mean_residual, but replaces BCEWithLogitsLoss with MSELoss.
+# - Similar architecture to torch_mean_residual, but replaces BCEWithLogitsLoss with MSELoss.
 # - This isolates the effect of "regression-style" training while keeping ranking evaluation
 #   (NDCG/F1) unchanged.
 #
 # Form:
-#   score[b, l] = sum_m (w_global[m] + delta_w[m, l]) * x[b, m, l]
+#   score[b, l] = sum_m (w_global[m] * scale[m, l]) * x[b, m, l]
 #
 # Notes:
-# - Targets are dense float tensors in {0,1} (same as torch_mean_residual).
+# - Targets are dense float tensors in {0,1}.
 # - Outputs are unbounded real-valued scores; ranking uses raw scores.
 from __future__ import annotations
 
@@ -94,10 +94,10 @@ EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
 
-# Hyperparameters for "residual" approach
+# Hyperparameters for multiplicative per-label scaling
 LR = 0.003
-WEIGHT_DECAY = 0.0  # rely on explicit residual penalty
-LAMBDA_DELTA_L2 = 1e-2  # strength of shrinkage of per-label residuals toward 0
+WEIGHT_DECAY = 0.0  # rely on explicit scale penalty
+LAMBDA_SCALE_L2 = 1e-2  # strength of shrinkage of per-label scales toward 1
 
 # Reproducibility
 TRAIN_SEED = 0
@@ -105,13 +105,24 @@ TRAIN_SEED = 0
 
 class MeanResidualEnsemble(nn.Module):
     """
-    Mean-like ensemble with per-label residual weights.
+    Mean-like ensemble with per-label multiplicative scaling factors.
 
     Input:
-        x: (batch, M=3, L) log1p-preprocessed scores (non-negative)
+        x: (batch, M=3, L) raw base model scores (no log1p preprocessing assumed)
     Output:
         score: (batch, L) unbounded real-valued scores
+
+    Form:
+        score[b, l] = sum_m (global_w[m] * scale[m, l]) * x[b, m, l]
+
+    Notes:
+        - global_w is a softmax over learned logits (non-negative, sums to 1 over models).
+        - scale is constrained to be positive and close to 1 via parameterization + regularization.
+        - We intentionally do NOT renormalize weights per label across models (as requested).
     """
+
+    # Keep this conservative; can be tuned via CLI later if needed.
+    SCALE_ALPHA = 0.5  # scale in (1-alpha, 1+alpha)
 
     def __init__(self, n_models: int, n_labels: int, init_global: torch.Tensor | None):
         super().__init__()
@@ -135,17 +146,18 @@ class MeanResidualEnsemble(nn.Module):
 
         # Global per-model weights (shared over labels). Learnable.
         # We learn unconstrained logits and normalize with softmax in effective_w()
-        # so that global weights are always non-negative and sum to 1.
+        # so that global weights are always non-negative and sum to 1 (over models).
         self._global_logits = nn.Parameter(torch.log(w0))  # (M,)
 
-        # Per-label residual weights initialized to 0. Learnable.
-        self.delta_w = nn.Parameter(torch.zeros((n_models, n_labels), dtype=torch.float32))
-
+        # Per-label multiplicative scaling (around 1). Learnable.
+        # scale_raw is unconstrained; scale = 1 + alpha * tanh(scale_raw) -> (1-alpha, 1+alpha)
+        self.scale_raw = nn.Parameter(torch.zeros((n_models, n_labels), dtype=torch.float32))
 
     def effective_w(self) -> torch.Tensor:
         # (M, L)
         global_w = torch.softmax(self._global_logits, dim=0)  # (M,), sums to 1
-        return global_w[:, None] + self.delta_w
+        scale = 1.0 + self.SCALE_ALPHA * torch.tanh(self.scale_raw)  # (M, L), positive
+        return global_w[:, None] * scale
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
@@ -159,9 +171,10 @@ class MeanResidualEnsemble(nn.Module):
         score = (x * w_eff.unsqueeze(0)).sum(dim=1)  # (B, L)
         return score
 
-    def delta_l2(self) -> torch.Tensor:
-        # Mean squared residual for scale-invariant regularization.
-        return (self.delta_w**2).mean()
+    def scale_l2(self) -> torch.Tensor:
+        # Mean squared deviation from 1, for scale-invariant regularization.
+        scale = 1.0 + self.SCALE_ALPHA * torch.tanh(self.scale_raw)
+        return ((scale - 1.0) ** 2).mean()
 
 
 
@@ -214,10 +227,10 @@ def main() -> None:
         help="Dataset to benchmark",
     )
     parser.add_argument(
-        "--lambda-delta",
+        "--lambda-scale",
         type=float,
-        default=LAMBDA_DELTA_L2,
-        help="L2 shrinkage strength for per-label residual weights (delta_w)",
+        default=LAMBDA_SCALE_L2,
+        help="L2 shrinkage strength for per-label multiplicative scales (toward 1)",
     )
     parser.add_argument(
         "--pos-weight",
@@ -227,7 +240,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     dataset = str(args.dataset)
-    lambda_delta = float(args.lambda_delta)
+    lambda_scale = float(args.lambda_scale)
     pos_weight = float(args.pos_weight)
     if not np.isfinite(pos_weight) or pos_weight <= 0.0:
         raise ValueError("--pos-weight must be a positive finite float")
@@ -326,8 +339,8 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 scores = model(xb)
                 loss_main = weighted_mse_loss(scores, yb)
-                loss_reg_delta = lambda_delta * model.delta_l2()
-                loss_reg = loss_reg_delta
+                loss_reg_scale = lambda_scale * model.scale_l2()
+                loss_reg = loss_reg_scale
                 loss = loss_main + loss_reg
                 loss.backward()
                 optimizer.step()
@@ -354,29 +367,55 @@ def main() -> None:
         # --- Always-on debug diagnostics (no CLI flags) ---
         with torch.no_grad():
             # Parameters/regularization stats
-            delta_l2 = float(model.delta_l2().detach().cpu().item())
-            mean_abs_delta_per_model = model.delta_w.detach().abs().mean(dim=1).cpu().numpy()
-            max_abs_delta_per_model = model.delta_w.detach().abs().amax(dim=1).cpu().numpy()
+            scale_l2 = float(model.scale_l2().detach().cpu().item())
 
-            # Global weights (softmax-normalized; sums to 1)
+            # Global weights (softmax-normalized; sums to 1 over models)
             w_global = torch.softmax(model._global_logits.detach(), dim=0)
+
+            # Effective weights for diagnostics: w_eff = global_w * scale
+            w_eff = model.effective_w().detach()
+
+            # Scale tensor itself (to detect saturation at bounds)
+            scale = (w_eff / (w_global[:, None] + 1e-12)).detach()
 
             # Output distribution on the early-stop subset (to spot scale issues)
             subset_scores = train_scores_eval.detach()
 
+        # Per-model scale summaries (mean abs deviation from 1, max abs deviation)
+        mean_abs_scale_dev_per_model = (scale - 1.0).abs().mean(dim=1).cpu().numpy()
+        max_abs_scale_dev_per_model = (scale - 1.0).abs().amax(dim=1).cpu().numpy()
+
+        # Detect if tanh is saturating: |scale_raw| large => tanh ~ +/-1
+        mean_abs_scale_raw_per_model = model.scale_raw.detach().abs().mean(dim=1).cpu().numpy()
+        max_abs_scale_raw_per_model = model.scale_raw.detach().abs().amax(dim=1).cpu().numpy()
+
+        # Effective weight stats per model (helps catch runaway weight scaling without renorm)
+        mean_w_eff_per_model = w_eff.mean(dim=1).cpu().numpy()
+        max_w_eff_per_model = w_eff.amax(dim=1).cpu().numpy()
+
         diag = (
             " | "
-            f"delta_l2={delta_l2:.6e} "
-            f"mean_abs_delta=[{mean_abs_delta_per_model[0]:.3e},"
-            f"{mean_abs_delta_per_model[1]:.3e},"
-            f"{mean_abs_delta_per_model[2]:.3e}] "
-            f"max_abs_delta=[{max_abs_delta_per_model[0]:.3e},"
-            f"{max_abs_delta_per_model[1]:.3e},"
-            f"{max_abs_delta_per_model[2]:.3e}] "
+            f"scale_l2={scale_l2:.6e} "
+            f"mean_abs_scale_dev=[{mean_abs_scale_dev_per_model[0]:.3e},"
+            f"{mean_abs_scale_dev_per_model[1]:.3e},"
+            f"{mean_abs_scale_dev_per_model[2]:.3e}] "
+            f"max_abs_scale_dev=[{max_abs_scale_dev_per_model[0]:.3e},"
+            f"{max_abs_scale_dev_per_model[1]:.3e},"
+            f"{max_abs_scale_dev_per_model[2]:.3e}] "
+            f"mean_w_eff=[{mean_w_eff_per_model[0]:.3e},"
+            f"{mean_w_eff_per_model[1]:.3e},"
+            f"{mean_w_eff_per_model[2]:.3e}] "
+            f"max_w_eff=[{max_w_eff_per_model[0]:.3e},"
+            f"{max_w_eff_per_model[1]:.3e},"
+            f"{max_w_eff_per_model[2]:.3e}] "
+            f"max_abs_scale_raw=[{max_abs_scale_raw_per_model[0]:.3e},"
+            f"{max_abs_scale_raw_per_model[1]:.3e},"
+            f"{max_abs_scale_raw_per_model[2]:.3e}] "
         )
 
         w_stats = _tensor_stats_1d(w_global)
-        d_stats = _tensor_stats_all(model.delta_w.detach())
+        eff_stats = _tensor_stats_all(w_eff)
+        scale_stats = _tensor_stats_all(scale)
         s_stats = _tensor_stats_all(subset_scores)
 
         extra = (
@@ -384,14 +423,16 @@ def main() -> None:
             "  debug:\n"
             f"    global_w: mean={w_stats['mean']:.6f} std={w_stats['std']:.6f} "
             f"min={w_stats['min']:.6f} p50={w_stats['p50']:.6f} max={w_stats['max']:.6f}\n"
-            f"    delta_w:  mean={d_stats['mean']:.6e} std={d_stats['std']:.6e} "
-            f"min={d_stats['min']:.6e} p50={d_stats['p50']:.6e} max={d_stats['max']:.6e}\n"
+            f"    w_eff:    mean={eff_stats['mean']:.6e} std={eff_stats['std']:.6e} "
+            f"min={eff_stats['min']:.6e} p50={eff_stats['p50']:.6e} max={eff_stats['max']:.6e}\n"
+            f"    scale:    mean={scale_stats['mean']:.6e} std={scale_stats['std']:.6e} "
+            f"min={scale_stats['min']:.6e} p50={scale_stats['p50']:.6e} max={scale_stats['max']:.6e}\n"
             f"    scores:   mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
             f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} max={s_stats['max']:.6e}"
         )
 
         print(
-            f"[lambda_delta={lambda_delta:g} pos_weight={pos_weight:g}] "
+            f"[lambda_scale={lambda_scale:g} pos_weight={pos_weight:g}] "
             f"Epoch {epoch:02d} | "
             f"loss={loss.item():.6f} (wmse={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
