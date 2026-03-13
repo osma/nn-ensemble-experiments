@@ -56,9 +56,9 @@
 | torch_per_label_residual_lowrank_mix_active(bonsai,fasttext,mllm) | yso-en | 1 | 0.722495 | 0.808272 | 0.651005 | 0.758634 | 0.466942 |
 | torch_per_label_residual_lowrank_mix_active(bonsai,fasttext,mllm) | yso-fi | 1 | 0.728239 | 0.822888 | 0.697189 | 0.804671 | 0.534990 |
 | torch_per_label_residual_lowrank_mix_active(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.442085 | 0.528383 | 0.361227 | 0.444598 | 0.266173 |
-| torch_reg_mean_residual(bonsai,fasttext,mllm) | yso-en | 1 | 0.689302 | 0.782037 | 0.611693 | 0.708960 | 0.434063 |
-| torch_reg_mean_residual(bonsai,fasttext,mllm) | yso-fi | 1 | 0.691989 | 0.772356 | 0.653413 | 0.736751 | 0.495418 |
-| torch_reg_mean_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.416551 | 0.510342 | 0.329820 | 0.409278 | 0.247811 |
+| torch_reg_mean_residual(bonsai,fasttext,mllm) | yso-en | 1 | 0.689306 | 0.781867 | 0.611709 | 0.708791 | 0.434239 |
+| torch_reg_mean_residual(bonsai,fasttext,mllm) | yso-fi | 1 | 0.691964 | 0.772237 | 0.653525 | 0.736514 | 0.495014 |
+| torch_reg_mean_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.416510 | 0.510249 | 0.329807 | 0.409213 | 0.247815 |
 
 ## Top 10 Models by Avg Test NDCG@10 (across datasets)
 
