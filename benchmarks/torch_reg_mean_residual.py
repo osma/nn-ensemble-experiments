@@ -244,6 +244,8 @@ def main() -> None:
     pos_weight = float(args.pos_weight)
     if not np.isfinite(pos_weight) or pos_weight <= 0.0:
         raise ValueError("--pos-weight must be a positive finite float")
+    if not np.isfinite(lambda_scale) or lambda_scale < 0.0:
+        raise ValueError("--lambda-scale must be a finite non-negative float")
 
     # Deterministic-ish
     torch.manual_seed(TRAIN_SEED)
