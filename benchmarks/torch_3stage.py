@@ -21,6 +21,38 @@ from benchmarks.metrics import (
     update_markdown_scoreboard,
 )
 
+
+def _fmt_tensor_stats(t: torch.Tensor) -> str:
+    tt = t.detach().float().cpu()
+    return (
+        f"shape={tuple(tt.shape)} "
+        f"min={tt.min().item():.6f} "
+        f"max={tt.max().item():.6f} "
+        f"mean={tt.mean().item():.6f} "
+        f"std={tt.std(unbiased=False).item():.6f}"
+    )
+
+
+def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
+    with torch.no_grad():
+        # Conv1d weights are (1, M, 1)
+        w = model.conv.weight.detach().float().cpu().view(-1)
+        w_np = w.numpy()
+
+        # Useful invariants to spot training pathologies:
+        #  - sum close to 1 (not enforced but expected-ish)
+        #  - min/max to see collapse or sign issues
+        #  - L1/L2 norms as magnitude checks
+        w_sum = float(w_np.sum())
+        w_l1 = float(np.abs(w_np).sum())
+        w_l2 = float(np.sqrt(np.square(w_np).sum()))
+
+        print(
+            f"{prefix} weights={w_np.round(6).tolist()} "
+            f"(sum={w_sum:.6f}, l1={w_l1:.6f}, l2={w_l2:.6f}, "
+            f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f})"
+        )
+
 DEVICE = get_device()
 EPOCHS = 20
 LR = 1e-3
@@ -85,6 +117,13 @@ def main():
     # Keep Y_train on CPU (requested).
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
 
+    print(f"X_train: {_fmt_tensor_stats(X_train)}")
+    print(
+        f"Y_train: shape={tuple(Y_train.shape)} "
+        f"pos_rate={float(Y_train.mean().item()):.6f} "
+        f"nnz={int(y_train_true.nnz)}"
+    )
+
     # Fixed random subset of train rows for per-epoch early stopping metric
     rng = np.random.default_rng(EARLY_STOP_SEED)
     n_train = X_train.shape[0]
@@ -101,7 +140,11 @@ def main():
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
     X_test = torch.stack([csr_to_raw_tensor(p) for p in test_preds], dim=1)
 
+    print(f"X_test: {_fmt_tensor_stats(X_test)}")
+    print(f"y_test_true: shape={y_test_true.shape} nnz={int(y_test_true.nnz)}")
+
     model = Torch3Stage(n_models=X_train.shape[1]).to(DEVICE)
+    _print_model_debug(model, prefix="init")
     optimizer = optim.AdamW(
         model.parameters(),
         lr=LR,
@@ -132,15 +175,30 @@ def main():
 
     for epoch in range(1, EPOCHS + 1):
         model.train()
+        epoch_loss_sum = 0.0
+        epoch_loss_n = 0
+
         for xb, yb in train_loader:
             xb = xb.to(DEVICE, non_blocking=True)
             yb = yb.to(DEVICE, non_blocking=True)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             output_train = model(xb)
             loss = criterion(output_train, yb)
             loss.backward()
+
+            # Print gradient stats for the only trainable tensor in this model.
+            if model.conv.weight.grad is None:
+                grad_stats = "grad=None"
+            else:
+                grad_stats = f"grad({_fmt_tensor_stats(model.conv.weight.grad)})"
+
             optimizer.step()
+
+            epoch_loss_sum += float(loss.detach().item())
+            epoch_loss_n += 1
+
+        avg_loss = epoch_loss_sum / max(1, epoch_loss_n)
 
         # --- Train evaluation for early stopping (subset only) ---
         train_eval_output = _predict_in_batches(model, X_train_eval)
@@ -157,6 +215,15 @@ def main():
 
         f1, _ = f1_at_k_dense(y_test_true, output_test, k=5)
         test_metrics["f1@5"] = f1
+
+        _print_model_debug(
+            model,
+            prefix=(
+                f"epoch={epoch} loss={avg_loss:.6f} "
+                f"train_ndcg@1000(subset)={train_ndcg1000:.6f} "
+                f"train_used={n_used_train} {grad_stats} |"
+            ),
+        )
 
         current = train_ndcg1000
         if current > best_metric:
@@ -203,6 +270,8 @@ def main():
         n_samples=best_n_used_test,
         epoch=best_epoch,
     )
+
+    _print_model_debug(model, prefix="final")
 
     print(
         "\nFinal test metrics | "
