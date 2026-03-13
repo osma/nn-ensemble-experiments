@@ -219,9 +219,18 @@ def main() -> None:
         default=LAMBDA_DELTA_L2,
         help="L2 shrinkage strength for per-label residual weights (delta_w)",
     )
+    parser.add_argument(
+        "--pos-weight",
+        type=float,
+        default=100.0,
+        help="Weight multiplier for positive targets (y=1) in weighted MSE.",
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
     lambda_delta = float(args.lambda_delta)
+    pos_weight = float(args.pos_weight)
+    if not np.isfinite(pos_weight) or pos_weight <= 0.0:
+        raise ValueError("--pos-weight must be a positive finite float")
 
     # Deterministic-ish
     torch.manual_seed(TRAIN_SEED)
@@ -280,7 +289,15 @@ def main() -> None:
         weight_decay=WEIGHT_DECAY,
         eps=1e-8,
     )
-    criterion = nn.MSELoss()
+
+    # Weighted MSE to counter extreme class imbalance in dense {0,1} targets.
+    # This reduces the degenerate "predict ~0 everywhere" optimum.
+    def weighted_mse_loss(scores: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        if scores.shape != y.shape:
+            raise ValueError(f"Shape mismatch: scores={tuple(scores.shape)} y={tuple(y.shape)}")
+        w = torch.ones_like(y, dtype=scores.dtype, device=scores.device)
+        w = torch.where(y > 0.0, w * pos_weight, w)
+        return (w * (scores - y) ** 2).mean()
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
     train_loader = torch.utils.data.DataLoader(
@@ -308,7 +325,7 @@ def main() -> None:
 
                 optimizer.zero_grad(set_to_none=True)
                 scores = model(xb)
-                loss_main = criterion(scores, yb)
+                loss_main = weighted_mse_loss(scores, yb)
                 loss_reg_delta = lambda_delta * model.delta_l2()
                 loss_reg = loss_reg_delta
                 loss = loss_main + loss_reg
@@ -374,9 +391,9 @@ def main() -> None:
         )
 
         print(
-            f"[lambda_delta={lambda_delta:g}] "
+            f"[lambda_delta={lambda_delta:g} pos_weight={pos_weight:g}] "
             f"Epoch {epoch:02d} | "
-            f"loss={loss.item():.6f} (mse={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
+            f"loss={loss.item():.6f} (wmse={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
