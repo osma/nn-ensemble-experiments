@@ -8,7 +8,7 @@
 #   (NDCG/F1) unchanged.
 #
 # Form:
-#   score[b, l] = sum_m (w_global[m] + delta_w[m, l]) * x[b, m, l] + bias[l]
+#   score[b, l] = sum_m (w_global[m] + delta_w[m, l]) * x[b, m, l]
 #
 # Notes:
 # - Targets are dense float tensors in {0,1} (same as torch_mean_residual).
@@ -98,7 +98,6 @@ EARLY_STOP_SEED = 1337
 LR = 0.003
 WEIGHT_DECAY = 0.0  # rely on explicit residual penalty
 LAMBDA_DELTA_L2 = 1e-2  # strength of shrinkage of per-label residuals toward 0
-LAMBDA_BIAS_L2 = 1e-3  # shrinkage for per-label bias (important for large label spaces)
 
 # Reproducibility
 TRAIN_SEED = 0
@@ -142,8 +141,6 @@ class MeanResidualEnsemble(nn.Module):
         # Per-label residual weights initialized to 0. Learnable.
         self.delta_w = nn.Parameter(torch.zeros((n_models, n_labels), dtype=torch.float32))
 
-        # Per-label bias in score space.
-        self.bias = nn.Parameter(torch.zeros((n_labels,), dtype=torch.float32))
 
     def effective_w(self) -> torch.Tensor:
         # (M, L)
@@ -159,16 +156,13 @@ class MeanResidualEnsemble(nn.Module):
             )
 
         w_eff = self.effective_w()  # (M, L)
-        score = (x * w_eff.unsqueeze(0)).sum(dim=1) + self.bias  # (B, L)
+        score = (x * w_eff.unsqueeze(0)).sum(dim=1)  # (B, L)
         return score
 
     def delta_l2(self) -> torch.Tensor:
         # Mean squared residual for scale-invariant regularization.
         return (self.delta_w**2).mean()
 
-    def bias_l2(self) -> torch.Tensor:
-        # Mean squared bias for scale-invariant regularization.
-        return (self.bias**2).mean()
 
 
 def _sync_if_cuda() -> None:
@@ -225,16 +219,9 @@ def main() -> None:
         default=LAMBDA_DELTA_L2,
         help="L2 shrinkage strength for per-label residual weights (delta_w)",
     )
-    parser.add_argument(
-        "--lambda-bias",
-        type=float,
-        default=LAMBDA_BIAS_L2,
-        help="L2 shrinkage strength for per-label bias (bias)",
-    )
     args = parser.parse_args()
     dataset = str(args.dataset)
     lambda_delta = float(args.lambda_delta)
-    lambda_bias = float(args.lambda_bias)
 
     # Deterministic-ish
     torch.manual_seed(TRAIN_SEED)
@@ -323,8 +310,7 @@ def main() -> None:
                 scores = model(xb)
                 loss_main = criterion(scores, yb)
                 loss_reg_delta = lambda_delta * model.delta_l2()
-                loss_reg_bias = lambda_bias * model.bias_l2()
-                loss_reg = loss_reg_delta + loss_reg_bias
+                loss_reg = loss_reg_delta
                 loss = loss_main + loss_reg
                 loss.backward()
                 optimizer.step()
@@ -374,14 +360,10 @@ def main() -> None:
             f"max_abs_delta=[{max_abs_delta_per_model[0]:.3e},"
             f"{max_abs_delta_per_model[1]:.3e},"
             f"{max_abs_delta_per_model[2]:.3e}] "
-            f"bias_l2={bias_l2:.6e} "
-            f"mean_abs_bias={mean_abs_bias:.3e} "
-            f"max_abs_bias={max_abs_bias:.3e}"
         )
 
         w_stats = _tensor_stats_1d(w_global)
         d_stats = _tensor_stats_all(model.delta_w.detach())
-        b_stats = _tensor_stats_1d(model.bias.detach())
         s_stats = _tensor_stats_all(subset_scores)
 
         extra = (
@@ -391,14 +373,12 @@ def main() -> None:
             f"min={w_stats['min']:.6f} p50={w_stats['p50']:.6f} max={w_stats['max']:.6f}\n"
             f"    delta_w:  mean={d_stats['mean']:.6e} std={d_stats['std']:.6e} "
             f"min={d_stats['min']:.6e} p50={d_stats['p50']:.6e} max={d_stats['max']:.6e}\n"
-            f"    bias:     mean={b_stats['mean']:.6e} std={b_stats['std']:.6e} "
-            f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}\n"
             f"    scores:   mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
             f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} max={s_stats['max']:.6e}"
         )
 
         print(
-            f"[lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g}] "
+            f"[lambda_delta={lambda_delta:g}] "
             f"Epoch {epoch:02d} | "
             f"loss={loss.item():.6f} (mse={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
