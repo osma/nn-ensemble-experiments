@@ -229,26 +229,10 @@ def main() -> None:
         default=LAMBDA_BIAS_L2,
         help="L2 shrinkage strength for per-label bias (bias)",
     )
-    parser.add_argument(
-        "--print-delta",
-        action="store_true",
-        help="Print delta_w diagnostics (delta_l2 and per-model mean |delta|) each epoch",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help=(
-            "Print extra debugging diagnostics each epoch: "
-            "global weights, delta weight distribution, bias distribution, "
-            "and output score distribution on the early-stop train subset."
-        ),
-    )
     args = parser.parse_args()
     dataset = str(args.dataset)
     lambda_delta = float(args.lambda_delta)
     lambda_bias = float(args.lambda_bias)
-    print_delta = bool(args.print_delta)
-    debug = bool(args.debug)
 
     # Deterministic-ish
     torch.manual_seed(TRAIN_SEED)
@@ -360,54 +344,54 @@ def main() -> None:
         f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
         test_metrics["f1@5"] = f1
 
-        diag = ""
-        if print_delta or debug:
-            with torch.no_grad():
-                delta_l2 = float(model.delta_l2().detach().cpu().item())
-                mean_abs_delta_per_model = model.delta_w.detach().abs().mean(dim=1).cpu().numpy()
+        # --- Always-on debug diagnostics (no CLI flags) ---
+        with torch.no_grad():
+            # Parameters/regularization stats
+            delta_l2 = float(model.delta_l2().detach().cpu().item())
+            mean_abs_delta_per_model = model.delta_w.detach().abs().mean(dim=1).cpu().numpy()
+            max_abs_delta_per_model = model.delta_w.detach().abs().amax(dim=1).cpu().numpy()
 
-                bias_l2 = float(model.bias_l2().detach().cpu().item())
-                mean_abs_bias = float(model.bias.detach().abs().mean().cpu().item())
-                max_abs_bias = float(model.bias.detach().abs().max().cpu().item())
+            bias_l2 = float(model.bias_l2().detach().cpu().item())
+            mean_abs_bias = float(model.bias.detach().abs().mean().cpu().item())
+            max_abs_bias = float(model.bias.detach().abs().max().cpu().item())
 
-            diag = (
-                " | "
-                f"delta_l2={delta_l2:.6e} "
-                f"mean_abs_delta=[{mean_abs_delta_per_model[0]:.3e},"
-                f"{mean_abs_delta_per_model[1]:.3e},"
-                f"{mean_abs_delta_per_model[2]:.3e}] "
-                f"bias_l2={bias_l2:.6e} "
-                f"mean_abs_bias={mean_abs_bias:.3e} "
-                f"max_abs_bias={max_abs_bias:.3e}"
-            )
+            # Global weights
+            w_global = model.global_w.detach()
 
-        extra = ""
-        if debug:
-            with torch.no_grad():
-                w_global = model.global_w.detach()
-                delta_w = model.delta_w.detach()
-                bias = model.bias.detach()
+            # Output distribution on the early-stop subset (to spot scale issues)
+            subset_scores = train_scores_eval.detach()
 
-                # Output distribution on the early-stop subset (to spot scale issues)
-                subset_scores = train_scores_eval.detach()
+        diag = (
+            " | "
+            f"delta_l2={delta_l2:.6e} "
+            f"mean_abs_delta=[{mean_abs_delta_per_model[0]:.3e},"
+            f"{mean_abs_delta_per_model[1]:.3e},"
+            f"{mean_abs_delta_per_model[2]:.3e}] "
+            f"max_abs_delta=[{max_abs_delta_per_model[0]:.3e},"
+            f"{max_abs_delta_per_model[1]:.3e},"
+            f"{max_abs_delta_per_model[2]:.3e}] "
+            f"bias_l2={bias_l2:.6e} "
+            f"mean_abs_bias={mean_abs_bias:.3e} "
+            f"max_abs_bias={max_abs_bias:.3e}"
+        )
 
-            w_stats = _tensor_stats_1d(w_global)
-            d_stats = _tensor_stats_all(delta_w)
-            b_stats = _tensor_stats_1d(bias)
-            s_stats = _tensor_stats_all(subset_scores)
+        w_stats = _tensor_stats_1d(w_global)
+        d_stats = _tensor_stats_all(model.delta_w.detach())
+        b_stats = _tensor_stats_1d(model.bias.detach())
+        s_stats = _tensor_stats_all(subset_scores)
 
-            extra = (
-                "\n"
-                "  debug:\n"
-                f"    global_w: mean={w_stats['mean']:.6f} std={w_stats['std']:.6f} "
-                f"min={w_stats['min']:.6f} p50={w_stats['p50']:.6f} max={w_stats['max']:.6f}\n"
-                f"    delta_w:  mean={d_stats['mean']:.6e} std={d_stats['std']:.6e} "
-                f"min={d_stats['min']:.6e} p50={d_stats['p50']:.6e} max={d_stats['max']:.6e}\n"
-                f"    bias:     mean={b_stats['mean']:.6e} std={b_stats['std']:.6e} "
-                f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}\n"
-                f"    scores:   mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
-                f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} max={s_stats['max']:.6e}"
-            )
+        extra = (
+            "\n"
+            "  debug:\n"
+            f"    global_w: mean={w_stats['mean']:.6f} std={w_stats['std']:.6f} "
+            f"min={w_stats['min']:.6f} p50={w_stats['p50']:.6f} max={w_stats['max']:.6f}\n"
+            f"    delta_w:  mean={d_stats['mean']:.6e} std={d_stats['std']:.6e} "
+            f"min={d_stats['min']:.6e} p50={d_stats['p50']:.6e} max={d_stats['max']:.6e}\n"
+            f"    bias:     mean={b_stats['mean']:.6e} std={b_stats['std']:.6e} "
+            f"min={b_stats['min']:.6e} p50={b_stats['p50']:.6e} max={b_stats['max']:.6e}\n"
+            f"    scores:   mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
+            f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} max={s_stats['max']:.6e}"
+        )
 
         print(
             f"[lambda_delta={lambda_delta:g} lambda_bias={lambda_bias:g}] "
