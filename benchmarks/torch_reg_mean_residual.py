@@ -242,7 +242,7 @@ def main() -> None:
         "--pos-weight",
         type=float,
         default=100.0,
-        help="Weight multiplier for positive targets (y=1) in weighted MSE.",
+        help="Weight multiplier for positive targets (y=1) in weighted Huber loss.",
     )
     args = parser.parse_args()
     dataset = str(args.dataset)
@@ -311,14 +311,19 @@ def main() -> None:
         eps=1e-8,
     )
 
-    # Weighted MSE to counter extreme class imbalance in dense {0,1} targets.
-    # This reduces the degenerate "predict ~0 everywhere" optimum.
-    def weighted_mse_loss(scores: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    # Weighted Huber (SmoothL1) to counter extreme class imbalance in dense {0,1} targets,
+    # while being less sensitive to outliers than MSE.
+    #
+    # Notes:
+    # - We apply weights per-element and then mean-reduce.
+    # - Using the default SmoothL1Loss beta=1.0 (quadratic near 0, linear for large errors).
+    def weighted_huber_loss(scores: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         if scores.shape != y.shape:
             raise ValueError(f"Shape mismatch: scores={tuple(scores.shape)} y={tuple(y.shape)}")
         w = torch.ones_like(y, dtype=scores.dtype, device=scores.device)
         w = torch.where(y > 0.0, w * pos_weight, w)
-        return (w * (scores - y) ** 2).mean()
+        huber = torch.nn.functional.smooth_l1_loss(scores, y, reduction="none", beta=1.0)
+        return (w * huber).mean()
 
     train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
     train_loader = torch.utils.data.DataLoader(
@@ -346,7 +351,7 @@ def main() -> None:
 
                 optimizer.zero_grad(set_to_none=True)
                 scores = model(xb)
-                loss_main = weighted_mse_loss(scores, yb)
+                loss_main = weighted_huber_loss(scores, yb)
                 loss_reg_scale = lambda_scale * model.scale_l2()
                 loss_reg = loss_reg_scale
                 loss = loss_main + loss_reg
@@ -448,7 +453,7 @@ def main() -> None:
         print(
             f"[lambda_scale={lambda_scale:g} pos_weight={pos_weight:g}] "
             f"Epoch {epoch:02d} | "
-            f"loss={loss.item():.6f} (wmse={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
+            f"loss={loss.item():.6f} (whuber={loss_main.item():.6f} reg={loss_reg.item():.6f}) | "
             f"train_ndcg@1000(subset)={train_ndcg1000:.6f} | "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
