@@ -113,11 +113,12 @@ class MeanResidualEnsemble(nn.Module):
         score: (batch, L) unbounded real-valued scores
 
     Form:
-        score[b, l] = sum_m (global_w[m] * scale[m, l]) * x[b, m, l]
+        score[b, l] = sum_m (global_w[m] * scale[m, l]) * x[b, m, l] + bias[l]
 
     Notes:
         - global_w is a softmax over learned logits (non-negative, sums to 1 over models).
         - scale is constrained to be positive and close to 1 via parameterization + regularization.
+        - bias is an unconstrained per-label offset term.
         - We intentionally do NOT renormalize weights per label across models (as requested).
     """
 
@@ -153,6 +154,10 @@ class MeanResidualEnsemble(nn.Module):
         # scale_raw is unconstrained; scale = 1 + alpha * tanh(scale_raw) -> (1-alpha, 1+alpha)
         self.scale_raw = nn.Parameter(torch.zeros((n_models, n_labels), dtype=torch.float32))
 
+        # Per-label bias term (unbounded), helps avoid "all-zero" outputs when all base
+        # models have 0 for a label and allows learning label priors/offsets.
+        self.bias = nn.Parameter(torch.zeros((n_labels,), dtype=torch.float32))
+
     def effective_w(self) -> torch.Tensor:
         # (M, L)
         global_w = torch.softmax(self._global_logits, dim=0)  # (M,), sums to 1
@@ -169,6 +174,7 @@ class MeanResidualEnsemble(nn.Module):
 
         w_eff = self.effective_w()  # (M, L)
         score = (x * w_eff.unsqueeze(0)).sum(dim=1)  # (B, L)
+        score = score + self.bias.unsqueeze(0)
         return score
 
     def scale_l2(self) -> torch.Tensor:
@@ -380,7 +386,10 @@ def main() -> None:
             # Scale tensor itself (to detect saturation at bounds)
             scale = (w_eff / (w_global[:, None] + 1e-12)).detach()
 
-            # Output distribution on the early-stop subset (to spot scale issues)
+            # Bias stats (helps spot runaway offsets / collapse)
+            bias = model.bias.detach()
+
+            # Output distribution on the early-stop subset (to spot scale/bias issues)
             subset_scores = train_scores_eval.detach()
 
         # Per-model scale summaries (mean abs deviation from 1, max abs deviation)
@@ -418,6 +427,7 @@ def main() -> None:
         w_stats = _tensor_stats_1d(w_global)
         eff_stats = _tensor_stats_all(w_eff)
         scale_stats = _tensor_stats_all(scale)
+        bias_stats = _tensor_stats_1d(bias)
         s_stats = _tensor_stats_all(subset_scores)
 
         extra = (
@@ -429,6 +439,8 @@ def main() -> None:
             f"min={eff_stats['min']:.6e} p50={eff_stats['p50']:.6e} max={eff_stats['max']:.6e}\n"
             f"    scale:    mean={scale_stats['mean']:.6e} std={scale_stats['std']:.6e} "
             f"min={scale_stats['min']:.6e} p50={scale_stats['p50']:.6e} max={scale_stats['max']:.6e}\n"
+            f"    bias:     mean={bias_stats['mean']:.6e} std={bias_stats['std']:.6e} "
+            f"min={bias_stats['min']:.6e} p50={bias_stats['p50']:.6e} max={bias_stats['max']:.6e}\n"
             f"    scores:   mean={s_stats['mean']:.6e} std={s_stats['std']:.6e} "
             f"min={s_stats['min']:.6e} p50={s_stats['p50']:.6e} max={s_stats['max']:.6e}"
         )
