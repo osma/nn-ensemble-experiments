@@ -30,7 +30,6 @@ import torch.optim as optim
 
 from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
 from benchmarks.device import get_device
-from benchmarks.preprocessing import csr_to_log1p_tensor
 from benchmarks.metrics import load_csr, ndcg_at_k_dense, f1_at_k_dense, update_markdown_scoreboard
 
 
@@ -136,7 +135,9 @@ class MeanResidualEnsemble(nn.Module):
             w0 = w0 / w0.sum()
 
         # Global per-model weights (shared over labels). Learnable.
-        self.global_w = nn.Parameter(w0)  # (M,)
+        # We learn unconstrained logits and normalize with softmax in effective_w()
+        # so that global weights are always non-negative and sum to 1.
+        self._global_logits = nn.Parameter(torch.log(w0))  # (M,)
 
         # Per-label residual weights initialized to 0. Learnable.
         self.delta_w = nn.Parameter(torch.zeros((n_models, n_labels), dtype=torch.float32))
@@ -146,7 +147,8 @@ class MeanResidualEnsemble(nn.Module):
 
     def effective_w(self) -> torch.Tensor:
         # (M, L)
-        return self.global_w[:, None] + self.delta_w
+        global_w = torch.softmax(self._global_logits, dim=0)  # (M,), sums to 1
+        return global_w[:, None] + self.delta_w
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
@@ -250,7 +252,8 @@ def main() -> None:
     train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in ensemble_keys]
 
     # Keep X_train on CPU; move minibatches to GPU.
-    X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds], dim=1)
+    # Use raw base model scores directly (no log1p preprocessing).
+    X_train = torch.stack([torch.from_numpy(p.toarray()).float() for p in train_preds], dim=1)
 
     # Regression targets are numeric 0/1.
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
@@ -266,7 +269,8 @@ def main() -> None:
     print("Loading test data...")
     y_test_true = load_csr(str(truth_path(dataset, "test")))
     test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in ensemble_keys]
-    X_test = torch.stack([csr_to_log1p_tensor(p) for p in test_preds], dim=1)
+    # Use raw base model scores directly (no log1p preprocessing).
+    X_test = torch.stack([torch.from_numpy(p.toarray()).float() for p in test_preds], dim=1)
 
     n_models = int(X_train.shape[1])
     n_labels = int(X_train.shape[2])
@@ -355,8 +359,8 @@ def main() -> None:
             mean_abs_bias = float(model.bias.detach().abs().mean().cpu().item())
             max_abs_bias = float(model.bias.detach().abs().max().cpu().item())
 
-            # Global weights
-            w_global = model.global_w.detach()
+            # Global weights (softmax-normalized; sums to 1)
+            w_global = torch.softmax(model._global_logits.detach(), dim=0)
 
             # Output distribution on the early-stop subset (to spot scale issues)
             subset_scores = train_scores_eval.detach()
