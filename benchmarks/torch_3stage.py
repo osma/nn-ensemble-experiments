@@ -13,6 +13,7 @@ import torch.optim as optim
 from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
 from benchmarks.preprocessing import csr_to_gamma_tensor, fit_source_gamma_from_csr
+from benchmarks.datasets import get_dataset_config
 from benchmarks.models.torch_3stage import Torch3Stage
 from benchmarks.metrics import (
     load_csr,
@@ -103,19 +104,19 @@ def _fmt_tensor_stats(t: torch.Tensor) -> str:
 
 def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
     with torch.no_grad():
-        w = model.effective_w().detach().float().cpu()
-        w_np = w.numpy()
+        w = model.global_w.detach().float().cpu().numpy()  # (M,)
+        w_sum = float(w.sum())
+        w_l1 = float(np.abs(w).sum())
+        w_l2 = float(np.sqrt(np.square(w).sum()))
 
-        b = float(model.b.detach().float().cpu().item())
-
-        w_sum = float(w_np.sum())
-        w_l1 = float(np.abs(w_np).sum())
-        w_l2 = float(np.sqrt(np.square(w_np).sum()))
+        delta_l2 = float(model.delta_l2().detach().float().cpu().item())
+        bias_l2 = float(model.bias_l2().detach().float().cpu().item())
 
         print(
-            f"{prefix} weights={w_np.round(6).tolist()} bias={b:.6f} "
+            f"{prefix} global_w={w.round(6).tolist()} "
             f"(sum={w_sum:.6f}, l1={w_l1:.6f}, l2={w_l2:.6f}, "
-            f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f})"
+            f"min={float(w.min()):.6f}, max={float(w.max()):.6f}) "
+            f"delta_l2={delta_l2:.6e} bias_l2={bias_l2:.6e}"
         )
 
 
@@ -135,6 +136,12 @@ EARLY_STOP_SEED = 1337
 PAIRWISE_N_PAIRS = 128
 PAIRWISE_MARGIN = 0.0
 PAIRWISE_SEED = 1337
+
+# Regularization (torch_mean_residual-style)
+WEIGHT_DECAY = 0.0  # rely on explicit penalties
+LAMBDA_GLOBAL_L2 = 1e-3
+LAMBDA_DELTA_L2 = 1e-2
+LAMBDA_BIAS_L2 = 1e-3
 
 
 def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
@@ -225,15 +232,28 @@ def main():
     print(f"X_test: {_fmt_tensor_stats(X_test)}")
     print(f"y_test_true: shape={y_test_true.shape} nnz={int(y_test_true.nnz)}")
 
-    model = Torch3Stage(n_models=X_train.shape[1]).to(DEVICE)
+    cfg = get_dataset_config(dataset)
+    init_global: torch.Tensor | None = None
+    if cfg.ensemble3_init_weights is not None:
+        init_global = torch.tensor(cfg.ensemble3_init_weights, dtype=torch.float32)
+        if init_global.shape[0] != int(X_train.shape[1]):
+            raise ValueError(
+                f"ensemble3_init_weights has length {init_global.shape[0]}, but X_train has n_models={int(X_train.shape[1])}."
+            )
+
+    model = Torch3Stage(
+        n_models=int(X_train.shape[1]),
+        n_labels=int(X_train.shape[2]),
+        init_global=init_global,
+    ).to(DEVICE)
     _print_model_debug(model, prefix="init")
     optimizer = optim.AdamW(
         model.parameters(),
         lr=LR,
-        weight_decay=0.01,
+        weight_decay=WEIGHT_DECAY,
         eps=1e-8,
     )
-    criterion = None  # pairwise ranking loss (see training loop)
+    criterion = None  # pairwise ranking loss (+ explicit regularization; see training loop)
 
     print("Starting training...")
 
@@ -268,30 +288,59 @@ def main():
             yb = yb.to(DEVICE, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
-            output_train = model(xb)  # probabilities in [0,1] used as scores
-            loss = pairwise_logistic_ranking_loss(
+            output_train = model(xb)  # scores
+            loss_rank = pairwise_logistic_ranking_loss(
                 output_train,
                 yb,
                 n_pairs=PAIRWISE_N_PAIRS,
                 margin=PAIRWISE_MARGIN,
                 seed=PAIRWISE_SEED + epoch,  # deterministic but changes per epoch
             )
+            loss_reg = (
+                float(LAMBDA_GLOBAL_L2) * model.global_l2()
+                + float(LAMBDA_DELTA_L2) * model.delta_l2()
+                + float(LAMBDA_BIAS_L2) * model.bias_l2()
+            )
+            loss = loss_rank + loss_reg
             loss.backward()
 
             # Print gradient stats for the trainable parameters.
-            w_grad = model.w.grad
-            b_grad = model.b.grad
+            gw_grad = model.global_w.grad
+            dw_grad = model.delta_w.grad
+            b_grad = model.bias.grad
 
             grad_parts: list[str] = []
-            if w_grad is None:
-                grad_parts.append("w_grad=None")
+            if gw_grad is None:
+                grad_parts.append("global_w_grad=None")
             else:
-                grad_parts.append(f"w_grad({_fmt_tensor_stats(w_grad)})")
+                grad_parts.append(f"global_w_grad({_fmt_tensor_stats(gw_grad)})")
+
+            if dw_grad is None:
+                grad_parts.append("delta_w_grad=None")
+            else:
+                # Avoid huge prints; just a couple of aggregates.
+                dw = dw_grad.detach().float()
+                grad_parts.append(
+                    "delta_w_grad("
+                    f"mean={float(dw.mean().cpu().item()):.6e} "
+                    f"std={float(dw.std(unbiased=False).cpu().item()):.6e} "
+                    f"min={float(dw.min().cpu().item()):.6e} "
+                    f"max={float(dw.max().cpu().item()):.6e}"
+                    ")"
+                )
 
             if b_grad is None:
-                grad_parts.append("b_grad=None")
+                grad_parts.append("bias_grad=None")
             else:
-                grad_parts.append(f"b_grad={float(b_grad.detach().float().cpu().item()):.6f}")
+                bg = b_grad.detach().float()
+                grad_parts.append(
+                    "bias_grad("
+                    f"mean={float(bg.mean().cpu().item()):.6e} "
+                    f"std={float(bg.std(unbiased=False).cpu().item()):.6e} "
+                    f"min={float(bg.min().cpu().item()):.6e} "
+                    f"max={float(bg.max().cpu().item()):.6e}"
+                    ")"
+                )
 
             grad_stats = " ".join(grad_parts)
 
