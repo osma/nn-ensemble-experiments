@@ -38,12 +38,14 @@ def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
         w = model.effective_w().detach().float().cpu()
         w_np = w.numpy()
 
+        b = float(model.b.detach().float().cpu().item())
+
         w_sum = float(w_np.sum())
         w_l1 = float(np.abs(w_np).sum())
         w_l2 = float(np.sqrt(np.square(w_np).sum()))
 
         print(
-            f"{prefix} weights={w_np.round(6).tolist()} "
+            f"{prefix} weights={w_np.round(6).tolist()} bias={b:.6f} "
             f"(sum={w_sum:.6f}, l1={w_l1:.6f}, l2={w_l2:.6f}, "
             f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f})"
         )
@@ -198,12 +200,22 @@ def main():
             loss = criterion(output_train, yb)
             loss.backward()
 
-            # Print gradient stats for the trainable weights (w).
+            # Print gradient stats for the trainable parameters.
             w_grad = model.w.grad
+            b_grad = model.b.grad
+
+            grad_parts: list[str] = []
             if w_grad is None:
-                grad_stats = "grad=None"
+                grad_parts.append("w_grad=None")
             else:
-                grad_stats = f"grad({_fmt_tensor_stats(w_grad)})"
+                grad_parts.append(f"w_grad({_fmt_tensor_stats(w_grad)})")
+
+            if b_grad is None:
+                grad_parts.append("b_grad=None")
+            else:
+                grad_parts.append(f"b_grad={float(b_grad.detach().float().cpu().item()):.6f}")
+
+            grad_stats = " ".join(grad_parts)
 
             optimizer.step()
 
@@ -310,3 +322,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+# Suggested commands to re-run:
+# ./regenerate_scoreboard.sh --models torch_3stage

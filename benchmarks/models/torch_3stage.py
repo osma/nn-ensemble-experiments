@@ -12,8 +12,8 @@ class Torch3Stage(nn.Module):
     Notes:
     - Weights are unconstrained (no softmax): they do NOT have to sum to 1 and may be negative.
     - Output is clamped to [0, 1] for use with BCELoss (requested).
-    - No per-source bias term (by design) to avoid shifting probability-like
-      inputs into an inconsistent space.
+    - Uses a single scalar bias term to let the model fit prevalence without
+      collapsing weights toward 0.
     """
 
     output_type = "prob"
@@ -30,6 +30,10 @@ class Torch3Stage(nn.Module):
             torch.full((self.n_models,), 1.0 / float(self.n_models), dtype=torch.float32)
         )
 
+        # Single scalar bias in probability space.
+        # Initialized to 0 (no shift) and broadcast over (B, L).
+        self.b = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
+
     def effective_w(self) -> torch.Tensor:
         """Return the learned weights of shape (M,)."""
         return self.w
@@ -44,5 +48,6 @@ class Torch3Stage(nn.Module):
             )
 
         w = self.effective_w().to(dtype=x.dtype, device=x.device)  # (M,)
-        out = (x * w.view(1, -1, 1)).sum(dim=1)  # (B, L)
+        b = self.b.to(dtype=x.dtype, device=x.device)  # scalar
+        out = (x * w.view(1, -1, 1)).sum(dim=1) + b  # (B, L)
         return torch.clamp(out, min=0.0, max=1.0)
