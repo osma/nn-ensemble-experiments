@@ -22,6 +22,74 @@ from benchmarks.metrics import (
 )
 
 
+def pairwise_logistic_ranking_loss(
+    logits: torch.Tensor,
+    y_true: torch.Tensor,
+    *,
+    n_pairs: int = 128,
+    margin: float = 0.0,
+    seed: int | None = None,
+) -> torch.Tensor:
+    """
+    Pairwise logistic ranking loss with negative sampling.
+
+    For each row:
+      - Sample up to n_pairs positive labels and n_pairs negative labels.
+      - Minimize: softplus(margin - (s_pos - s_neg))
+
+    Notes:
+    - Operates on *logits* (or any real-valued scores). No sigmoid needed.
+    - Uses only sampled pairs for efficiency with huge label spaces.
+    - Rows with no positives or no negatives contribute zero loss.
+    """
+    if logits.shape != y_true.shape:
+        raise ValueError(f"Shape mismatch: logits {tuple(logits.shape)} vs y_true {tuple(y_true.shape)}")
+    if logits.ndim != 2:
+        raise ValueError(f"Expected (B, L), got {tuple(logits.shape)}")
+    if n_pairs <= 0:
+        raise ValueError("n_pairs must be positive")
+
+    device = logits.device
+    B, L = logits.shape
+    y = (y_true > 0).to(torch.bool)
+
+    # Use a per-call generator so results can be reproducible if desired.
+    g = None
+    if seed is not None:
+        g = torch.Generator(device=device)
+        g.manual_seed(int(seed))
+
+    losses: list[torch.Tensor] = []
+
+    for i in range(B):
+        pos_idx = torch.nonzero(y[i], as_tuple=False).flatten()
+        if pos_idx.numel() == 0:
+            continue
+
+        neg_idx = torch.nonzero(~y[i], as_tuple=False).flatten()
+        if neg_idx.numel() == 0:
+            continue
+
+        m = int(min(n_pairs, pos_idx.numel(), neg_idx.numel()))
+        if m <= 0:
+            continue
+
+        pos_sel = pos_idx[torch.randperm(pos_idx.numel(), generator=g, device=device)[:m]]
+        neg_sel = neg_idx[torch.randperm(neg_idx.numel(), generator=g, device=device)[:m]]
+
+        s_pos = logits[i, pos_sel]
+        s_neg = logits[i, neg_sel]
+
+        # softplus(margin - (s_pos - s_neg)) is a smooth version of max(0, margin - diff)
+        diff = s_pos - s_neg
+        losses.append(torch.nn.functional.softplus(float(margin) - diff).mean())
+
+    if not losses:
+        return logits.new_tensor(0.0)
+
+    return torch.stack(losses).mean()
+
+
 def _fmt_tensor_stats(t: torch.Tensor) -> str:
     tt = t.detach().float().cpu()
     return (
@@ -63,6 +131,10 @@ MIN_EPOCHS = 2
 EVAL_BATCH_SIZE = 512
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
+
+PAIRWISE_N_PAIRS = 128
+PAIRWISE_MARGIN = 0.0
+PAIRWISE_SEED = 1337
 
 
 def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
@@ -161,7 +233,7 @@ def main():
         weight_decay=0.01,
         eps=1e-8,
     )
-    criterion = nn.BCELoss()
+    criterion = None  # pairwise ranking loss (see training loop)
 
     print("Starting training...")
 
@@ -196,8 +268,14 @@ def main():
             yb = yb.to(DEVICE, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
-            output_train = model(xb)  # probabilities in [0,1]
-            loss = criterion(output_train, yb)
+            output_train = model(xb)  # probabilities in [0,1] used as scores
+            loss = pairwise_logistic_ranking_loss(
+                output_train,
+                yb,
+                n_pairs=PAIRWISE_N_PAIRS,
+                margin=PAIRWISE_MARGIN,
+                seed=PAIRWISE_SEED + epoch,  # deterministic but changes per epoch
+            )
             loss.backward()
 
             # Print gradient stats for the trainable parameters.
