@@ -12,7 +12,7 @@ import torch.optim as optim
 
 from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
-from benchmarks.preprocessing import csr_to_raw_tensor
+from benchmarks.preprocessing import csr_to_logit_tensor
 from benchmarks.models.torch_3stage import Torch3Stage
 from benchmarks.metrics import (
     load_csr,
@@ -35,23 +35,22 @@ def _fmt_tensor_stats(t: torch.Tensor) -> str:
 
 def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
     with torch.no_grad():
-        # Conv1d weights are (1, M, 1)
-        w = model.conv.weight.detach().float().cpu().view(-1)
+        w = model.effective_w().detach().float().cpu()
         w_np = w.numpy()
 
-        # Useful invariants to spot training pathologies:
-        #  - sum close to 1 (not enforced but expected-ish)
-        #  - min/max to see collapse or sign issues
-        #  - L1/L2 norms as magnitude checks
         w_sum = float(w_np.sum())
         w_l1 = float(np.abs(w_np).sum())
         w_l2 = float(np.sqrt(np.square(w_np).sum()))
 
+        b = float(model.bias.detach().float().cpu().item())
+
         print(
             f"{prefix} weights={w_np.round(6).tolist()} "
             f"(sum={w_sum:.6f}, l1={w_l1:.6f}, l2={w_l2:.6f}, "
-            f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f})"
+            f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f}) "
+            f"bias={b:.6f}"
         )
+
 
 DEVICE = get_device()
 EPOCHS = 20
@@ -112,7 +111,8 @@ def main():
     train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in e3]
 
     # Keep X_train on CPU; move only minibatches to GPU.
-    X_train = torch.stack([csr_to_raw_tensor(p) for p in train_preds], dim=1)
+    # Convert base probabilities in [0,1] to logits for logit-space training.
+    X_train = torch.stack([csr_to_logit_tensor(p, eps=1e-6) for p in train_preds], dim=1)
 
     # Keep Y_train on CPU (requested).
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
@@ -138,7 +138,8 @@ def main():
     test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in e3]
 
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
-    X_test = torch.stack([csr_to_raw_tensor(p) for p in test_preds], dim=1)
+    # Convert base probabilities in [0,1] to logits for logit-space inference.
+    X_test = torch.stack([csr_to_logit_tensor(p, eps=1e-6) for p in test_preds], dim=1)
 
     print(f"X_test: {_fmt_tensor_stats(X_test)}")
     print(f"y_test_true: shape={y_test_true.shape} nnz={int(y_test_true.nnz)}")
@@ -151,7 +152,7 @@ def main():
         weight_decay=0.01,
         eps=1e-8,
     )
-    criterion = nn.BCELoss()
+    criterion = nn.BCEWithLogitsLoss()
 
     print("Starting training...")
 
@@ -183,7 +184,7 @@ def main():
             yb = yb.to(DEVICE, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
-            output_train = model(xb)
+            output_train = model(xb)  # logits
             loss = criterion(output_train, yb)
             loss.backward()
 
