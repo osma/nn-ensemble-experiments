@@ -42,13 +42,10 @@ def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
         w_l1 = float(np.abs(w_np).sum())
         w_l2 = float(np.sqrt(np.square(w_np).sum()))
 
-        b = model.bias.detach().float().cpu().numpy()
-
         print(
             f"{prefix} weights={w_np.round(6).tolist()} "
             f"(sum={w_sum:.6f}, l1={w_l1:.6f}, l2={w_l2:.6f}, "
-            f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f}) "
-            f"bias={b.round(6).tolist()}"
+            f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f})"
         )
 
 
@@ -230,6 +227,16 @@ def main():
 
         f1, _ = f1_at_k_dense(y_test_true, output_test, k=5)
         test_metrics["f1@5"] = f1
+
+        # Print test metrics every epoch (requested; always on by default).
+        print(
+            "test | "
+            f"epoch={epoch} "
+            f"ndcg@10={test_metrics['ndcg@10']:.6f} "
+            f"ndcg@1000={test_metrics['ndcg@1000']:.6f} "
+            f"f1@5={test_metrics['f1@5']:.6f} "
+            f"used={n_used_test}"
+        )
 
         _print_model_debug(
             model,

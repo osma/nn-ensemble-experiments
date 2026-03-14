@@ -11,8 +11,8 @@ class Torch3Stage(nn.Module):
 
     Notes:
     - Mixing weights are constrained by softmax (positive, sum to 1).
-    - We include a per-source bias in logit-like score space (shape (M,)) applied
-      before mixing. This can partially correct systematic source offsets.
+    - No per-source bias term (by design) to avoid shifting probability-like
+      inputs into an inconsistent space.
     """
 
     output_type = "logits"
@@ -26,10 +26,6 @@ class Torch3Stage(nn.Module):
         # Trainable logits for mixture weights (softmaxed in forward).
         # Initialize to equal weights.
         self.alpha = nn.Parameter(torch.zeros(self.n_models, dtype=torch.float32))
-
-        # Per-source (per base model) bias in logit space, shape (M,).
-        # Added to each source's logits before mixing.
-        self.bias = nn.Parameter(torch.zeros(self.n_models, dtype=torch.float32))
 
     def effective_w(self) -> torch.Tensor:
         """Return softmax-normalized weights of shape (M,)."""
@@ -45,5 +41,5 @@ class Torch3Stage(nn.Module):
             )
 
         w = self.effective_w().to(dtype=x.dtype, device=x.device)  # (M,)
-        out = ((x + self.bias.view(1, -1, 1)) * w.view(1, -1, 1)).sum(dim=1)  # (B, L)
+        out = (x * w.view(1, -1, 1)).sum(dim=1)  # (B, L)
         return out

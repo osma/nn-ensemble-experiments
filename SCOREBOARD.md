@@ -20,9 +20,9 @@
 | nn | koko |  |  |  | 0.374594 | 0.425015 | 0.276537 |
 | nn | yso-en |  |  |  | 0.643143 | 0.712582 | 0.458153 |
 | nn | yso-fi |  |  |  | 0.689080 | 0.768269 | 0.522291 |
-| torch_3stage(bonsai,fasttext,mllm) | yso-en | 16 | 0.652206 | 0.765863 | 0.614222 | 0.739158 | 0.428649 |
-| torch_3stage(bonsai,fasttext,mllm) | yso-fi | 1 | 0.656846 | 0.776072 | 0.653591 | 0.774471 | 0.493263 |
-| torch_3stage(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 8 | 0.427056 | 0.526289 | 0.352548 | 0.451160 | 0.257929 |
+| torch_3stage(bonsai,fasttext,mllm) | yso-en | 2 | 0.634711 | 0.765666 | 0.537126 | 0.700242 | 0.360810 |
+| torch_3stage(bonsai,fasttext,mllm) | yso-fi | 3 | 0.678987 | 0.793170 | 0.676299 | 0.791166 | 0.507161 |
+| torch_3stage(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.363093 | 0.479617 | 0.309300 | 0.420702 | 0.218257 |
 | torch_lowrank_residual_epsclamp(bonsai,fasttext,mllm) | yso-en | 20 | 0.748086 | 0.824475 | 0.654614 | 0.736405 | 0.461863 |
 | torch_lowrank_residual_epsclamp(bonsai,fasttext,mllm) | yso-fi | 20 | 0.756034 | 0.838082 | 0.696430 | 0.786967 | 0.529307 |
 | torch_lowrank_residual_epsclamp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.454791 | 0.548610 | 0.364144 | 0.438432 | 0.267507 |
