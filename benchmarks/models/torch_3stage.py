@@ -27,8 +27,9 @@ class Torch3Stage(nn.Module):
         # Initialize to equal weights.
         self.alpha = nn.Parameter(torch.zeros(self.n_models, dtype=torch.float32))
 
-        # Scalar bias in logit space.
-        self.bias = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
+        # Per-source (per base model) bias in logit space, shape (M,).
+        # Added to each source's logits before mixing.
+        self.bias = nn.Parameter(torch.zeros(self.n_models, dtype=torch.float32))
 
     def effective_w(self) -> torch.Tensor:
         """Return softmax-normalized weights of shape (M,)."""
@@ -44,5 +45,5 @@ class Torch3Stage(nn.Module):
             )
 
         w = self.effective_w().to(dtype=x.dtype, device=x.device)  # (M,)
-        out = (x * w.view(1, -1, 1)).sum(dim=1)  # (B, L)
-        return out + self.bias
+        out = ((x + self.bias.view(1, -1, 1)) * w.view(1, -1, 1)).sum(dim=1)  # (B, L)
+        return out

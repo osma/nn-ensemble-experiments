@@ -42,13 +42,13 @@ def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
         w_l1 = float(np.abs(w_np).sum())
         w_l2 = float(np.sqrt(np.square(w_np).sum()))
 
-        b = float(model.bias.detach().float().cpu().item())
+        b = model.bias.detach().float().cpu().numpy()
 
         print(
             f"{prefix} weights={w_np.round(6).tolist()} "
             f"(sum={w_sum:.6f}, l1={w_l1:.6f}, l2={w_l2:.6f}, "
             f"min={float(w_np.min()):.6f}, max={float(w_np.max()):.6f}) "
-            f"bias={b:.6f}"
+            f"bias={b.round(6).tolist()}"
         )
 
 
