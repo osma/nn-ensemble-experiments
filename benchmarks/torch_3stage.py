@@ -383,4 +383,3 @@ if __name__ == "__main__":
     main()
 # Suggested commands to re-run:
 # ./regenerate_scoreboard.sh --models torch_3stage
-```
