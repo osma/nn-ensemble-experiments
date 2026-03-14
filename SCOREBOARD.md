@@ -20,6 +20,9 @@
 | nn | koko |  |  |  | 0.374594 | 0.425015 | 0.276537 |
 | nn | yso-en |  |  |  | 0.643143 | 0.712582 | 0.458153 |
 | nn | yso-fi |  |  |  | 0.689080 | 0.768269 | 0.522291 |
+| torch_3stage(bonsai,fasttext,mllm) | yso-en | 2 | 0.684515 | 0.794890 | 0.602756 | 0.739606 | 0.423290 |
+| torch_3stage(bonsai,fasttext,mllm) | yso-fi | 1 | 0.710118 | 0.811382 | 0.678916 | 0.795779 | 0.515742 |
+| torch_3stage(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 6 | 0.429586 | 0.532780 | 0.357813 | 0.459422 | 0.262617 |
 | torch_lowrank_residual_epsclamp(bonsai,fasttext,mllm) | yso-en | 20 | 0.748086 | 0.824475 | 0.654614 | 0.736405 | 0.461863 |
 | torch_lowrank_residual_epsclamp(bonsai,fasttext,mllm) | yso-fi | 20 | 0.756034 | 0.838082 | 0.696430 | 0.786967 | 0.529307 |
 | torch_lowrank_residual_epsclamp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.454791 | 0.548610 | 0.364144 | 0.438432 | 0.267507 |
@@ -86,9 +89,9 @@
 | 5 | torch_mean_residual | 0.674558 |
 | 6 | torch_per_label_residual_lowrank_mix_active | 0.669301 |
 | 7 | mean_weighted | 0.665660 |
-| 8 | torch_mean | 0.664907 |
-| 9 | torch_nn_simple | 0.664545 |
-| 10 | mean | 0.663097 |
+| 8 | torch_3stage | 0.664936 |
+| 9 | torch_mean | 0.664907 |
+| 10 | torch_nn_simple | 0.664545 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
