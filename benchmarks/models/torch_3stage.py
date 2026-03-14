@@ -50,4 +50,4 @@ class Torch3Stage(nn.Module):
         w = self.effective_w().to(dtype=x.dtype, device=x.device)  # (M,)
         b = self.b.to(dtype=x.dtype, device=x.device)  # scalar
         out = (x * w.view(1, -1, 1)).sum(dim=1) + b  # (B, L)
-        return torch.clamp(out, min=0.0, max=1.0)
+        return out
