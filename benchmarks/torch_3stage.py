@@ -174,6 +174,9 @@ def main():
     best_n_used_test = None
     epochs_no_improve = 0
 
+    if EARLY_STOP_EVAL_ROWS <= 0:
+        raise ValueError("EARLY_STOP_EVAL_ROWS must be positive")
+
     for epoch in range(1, EPOCHS + 1):
         model.train()
         epoch_loss_sum = 0.0
@@ -188,11 +191,12 @@ def main():
             loss = criterion(output_train, yb)
             loss.backward()
 
-            # Print gradient stats for the only trainable tensor in this model.
-            if model.conv.weight.grad is None:
+            # Print gradient stats for the trainable mixture logits (alpha).
+            alpha_grad = model.alpha.grad
+            if alpha_grad is None:
                 grad_stats = "grad=None"
             else:
-                grad_stats = f"grad({_fmt_tensor_stats(model.conv.weight.grad)})"
+                grad_stats = f"grad({_fmt_tensor_stats(alpha_grad)})"
 
             optimizer.step()
 
@@ -250,6 +254,9 @@ def main():
 
         if epoch >= MIN_EPOCHS and epochs_no_improve >= PATIENCE:
             break
+
+    if best_state is None or best_epoch is None:
+        raise RuntimeError("Training failed to produce a best_state/best_epoch")
 
     model.load_state_dict(best_state)
 
