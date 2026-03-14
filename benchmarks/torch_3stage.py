@@ -159,7 +159,7 @@ def main():
         weight_decay=0.01,
         eps=1e-8,
     )
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.BCELoss()
 
     print("Starting training...")
 
@@ -194,16 +194,16 @@ def main():
             yb = yb.to(DEVICE, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
-            output_train = model(xb)  # logits
+            output_train = model(xb)  # probabilities in [0,1]
             loss = criterion(output_train, yb)
             loss.backward()
 
-            # Print gradient stats for the trainable mixture logits (alpha).
-            alpha_grad = model.alpha.grad
-            if alpha_grad is None:
+            # Print gradient stats for the trainable weights (w).
+            w_grad = model.w.grad
+            if w_grad is None:
                 grad_stats = "grad=None"
             else:
-                grad_stats = f"grad({_fmt_tensor_stats(alpha_grad)})"
+                grad_stats = f"grad({_fmt_tensor_stats(w_grad)})"
 
             optimizer.step()
 
