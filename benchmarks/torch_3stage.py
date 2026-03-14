@@ -12,7 +12,7 @@ import torch.optim as optim
 
 from benchmarks.datasets import ensemble3_keys, pred_path, truth_path
 from benchmarks.device import get_device
-from benchmarks.preprocessing import csr_to_logit_tensor
+from benchmarks.preprocessing import csr_to_gamma_tensor, fit_source_gamma_from_csr
 from benchmarks.models.torch_3stage import Torch3Stage
 from benchmarks.metrics import (
     load_csr,
@@ -110,9 +110,16 @@ def main():
     y_train_true = load_csr(str(truth_path(dataset, "train")))
     train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in e3]
 
+    # Per-source gamma correction fit on TRAIN prediction distributions (no labels).
+    gammas = fit_source_gamma_from_csr(train_preds, quantile=0.95, target=0.5)
+    print("Gamma per source:", {k: float(g) for k, g in zip(e3, gammas)})
+
     # Keep X_train on CPU; move only minibatches to GPU.
-    # Convert base probabilities in [0,1] to logits for logit-space training.
-    X_train = torch.stack([csr_to_logit_tensor(p, eps=1e-6) for p in train_preds], dim=1)
+    # Apply gamma correction in probability space.
+    X_train = torch.stack(
+        [csr_to_gamma_tensor(p, gamma=float(g)) for p, g in zip(train_preds, gammas)],
+        dim=1,
+    )
 
     # Keep Y_train on CPU (requested).
     Y_train = torch.from_numpy(y_train_true.toarray()).float()
@@ -138,8 +145,11 @@ def main():
     test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in e3]
 
     # Keep X_test on CPU; move to GPU only for evaluation forward pass.
-    # Convert base probabilities in [0,1] to logits for logit-space inference.
-    X_test = torch.stack([csr_to_logit_tensor(p, eps=1e-6) for p in test_preds], dim=1)
+    # Apply the SAME gammas fit from training distributions.
+    X_test = torch.stack(
+        [csr_to_gamma_tensor(p, gamma=float(g)) for p, g in zip(test_preds, gammas)],
+        dim=1,
+    )
 
     print(f"X_test: {_fmt_tensor_stats(X_test)}")
     print(f"y_test_true: shape={y_test_true.shape} nnz={int(y_test_true.nnz)}")
