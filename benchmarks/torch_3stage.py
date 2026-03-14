@@ -46,10 +46,13 @@ def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
         delta_l2 = float(model.delta_l2().detach().float().cpu().item())
         bias_l2 = float(model.bias_l2().detach().float().cpu().item())
 
+        anchor_l2 = float(model.global_anchor_l2().detach().float().cpu().item())
+
         print(
             f"{prefix} global_w={w.round(6).tolist()} "
             f"(sum={w_sum:.6f}, l1={w_l1:.6f}, l2={w_l2:.6f}, "
             f"min={float(w.min()):.6f}, max={float(w.max()):.6f}) "
+            f"anchor_l2={anchor_l2:.6e} "
             f"delta_l2={delta_l2:.6e} bias_l2={bias_l2:.6e}"
         )
 
@@ -73,7 +76,7 @@ PAIRWISE_SEED = 1337
 
 # Regularization (torch_mean_residual-style)
 WEIGHT_DECAY = 0.0  # rely on explicit penalties
-LAMBDA_GLOBAL_L2 = 1e-3
+LAMBDA_GLOBAL_ANCHOR_L2 = 1e-3
 LAMBDA_DELTA_L2 = 1e-2
 LAMBDA_BIAS_L2 = 1e-3
 
@@ -225,7 +228,7 @@ def main():
             output_train = model(xb)  # logits
             loss_main = criterion(output_train, yb)
             loss_reg = (
-                float(LAMBDA_GLOBAL_L2) * model.global_l2()
+                float(LAMBDA_GLOBAL_ANCHOR_L2) * model.global_anchor_l2()
                 + float(LAMBDA_DELTA_L2) * model.delta_l2()
                 + float(LAMBDA_BIAS_L2) * model.bias_l2()
             )
@@ -380,3 +383,4 @@ if __name__ == "__main__":
     main()
 # Suggested commands to re-run:
 # ./regenerate_scoreboard.sh --models torch_3stage
+```

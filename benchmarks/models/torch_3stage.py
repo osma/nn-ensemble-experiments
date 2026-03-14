@@ -48,6 +48,13 @@ class Torch3Stage(nn.Module):
                     f"init_global must have shape ({self.n_models},), got {tuple(init_global.shape)}"
                 )
             w0 = init_global.to(dtype=torch.float32).clone()
+            s = float(w0.sum().item())
+            if not torch.isfinite(w0).all() or not (s > 0.0):
+                raise ValueError("init_global must be finite and sum to a positive value")
+            w0 = w0 / w0.sum()
+
+        # Keep a non-trainable copy for anchor regularization.
+        self.register_buffer("init_global_w", w0.clone(), persistent=False)
 
         self.global_w = nn.Parameter(w0)  # (M,)
         self.delta_w = nn.Parameter(torch.zeros((self.n_models, self.n_labels), dtype=torch.float32))
@@ -71,8 +78,14 @@ class Torch3Stage(nn.Module):
         out = (x * w_eff.unsqueeze(0)).sum(dim=1) + bias  # (B, L)
         return out
 
-    def global_l2(self) -> torch.Tensor:
-        return (self.global_w ** 2).mean()
+    def global_anchor_l2(self) -> torch.Tensor:
+        """
+        Penalize deviation of global weights from their initialization.
+
+        This tends to preserve "mean-like" behavior and prevents global_w from drifting
+        into degenerate regimes (e.g. negative weights) early in training.
+        """
+        return ((self.global_w - self.init_global_w) ** 2).mean()
 
     def delta_l2(self) -> torch.Tensor:
         return (self.delta_w ** 2).mean()
