@@ -357,7 +357,7 @@ Notes / follow-ups:
 
 ---
 
-## Variant 7 (proposed): `torch_mean_residual_softmax_global_l2_anchor`
+## Variant 7: `torch_mean_residual_softmax_global_l2_anchor`
 
 **What changes:** combine Variant 1 and Variant 6 by using *both*:
 1) a softmax parameterization for the global weights, and  
@@ -378,18 +378,14 @@ by discouraging drift away from a strong dataset-specific initialization. The co
 improve generalization and reduce the “peaks at epoch 1 then degrades” behavior seen in several
 other variants.
 
-### Implementation sketch
+### Implementation
 
-- New script: `benchmarks/torch_mean_residual_softmax_global_l2_anchor.py`
+- Script: `benchmarks/torch_mean_residual_softmax_global_l2_anchor.py`
 - Model name written to scoreboard: `torch_mean_residual_softmax_global_l2_anchor(...)`
-- CLI:
-  - `--lambda-delta` (same as baseline)
-  - `--lambda-bias` (same as baseline)
-  - `--lambda-global` (new; default should match the Variant 6 anchor strength used previously)
+- CLI: identical to `torch_mean_residual` (no new flags)
 
 Notes:
-- Keep `LR=0.003` and other defaults unchanged for the first run to keep comparison controlled.
-- If this variant improves, follow-up is a small sweep of `lambda_global` (e.g. 3e-3, 1e-2, 3e-2).
+- The anchor strength is a script constant (`LAMBDA_GLOBAL_L2`) to keep comparisons controlled.
 
 ---
 
