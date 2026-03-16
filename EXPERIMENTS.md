@@ -156,6 +156,16 @@ Notes / follow-ups:
 **Hypothesis:** prevents extreme per-label weights for a subset of labels; tests whether occasional
 large residuals help ranking or primarily cause overfitting / instability.
 
+### Implementation
+
+- Script: `benchmarks/torch_mean_residual_delta_tanh_clamp.py`
+- Model name written to scoreboard: `torch_mean_residual_delta_tanh_clamp(...)`
+- CLI: identical to `torch_mean_residual` (no new flags)
+
+Notes:
+- `delta_max` is implemented as a module-level constant to keep comparisons controlled (no CLI flag).
+- Regularization is applied to `delta_raw` (not `delta_w`) for smoother optimization when tanh saturates.
+
 ---
 
 ## Variant 4: `torch_mean_residual_bias_per_model`
