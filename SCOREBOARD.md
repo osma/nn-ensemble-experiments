@@ -20,9 +20,9 @@
 | nn | koko |  |  |  | 0.374594 | 0.425015 | 0.276537 |
 | nn | yso-en |  |  |  | 0.643143 | 0.712582 | 0.458153 |
 | nn | yso-fi |  |  |  | 0.689080 | 0.768269 | 0.522291 |
-| torch_3stage(bonsai,fasttext,mllm) | yso-en | 1 | 0.646255 | 0.770880 | 0.565235 | 0.713905 | 0.382833 |
-| torch_3stage(bonsai,fasttext,mllm) | yso-fi | 1 | 0.643622 | 0.762290 | 0.597102 | 0.729274 | 0.445366 |
-| torch_3stage(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 8 | 0.427689 | 0.557146 | 0.339336 | 0.462062 | 0.247616 |
+| torch_3stage(bonsai,fasttext,mllm) | yso-en | 8 | 0.676880 | 0.782968 | 0.611260 | 0.740856 | 0.409013 |
+| torch_3stage(bonsai,fasttext,mllm) | yso-fi | 4 | 0.659991 | 0.771024 | 0.629780 | 0.751962 | 0.472689 |
+| torch_3stage(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.436778 | 0.548553 | 0.358409 | 0.469937 | 0.264481 |
 | torch_lowrank_residual_epsclamp(bonsai,fasttext,mllm) | yso-en | 20 | 0.748086 | 0.824475 | 0.654614 | 0.736405 | 0.461863 |
 | torch_lowrank_residual_epsclamp(bonsai,fasttext,mllm) | yso-fi | 20 | 0.756034 | 0.838082 | 0.696430 | 0.786967 | 0.529307 |
 | torch_lowrank_residual_epsclamp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.454791 | 0.548610 | 0.364144 | 0.438432 | 0.267507 |
@@ -133,10 +133,10 @@
 | 4 | torch_per_label_mlp | 0.367209 |
 | 5 | torch_per_label_l1_delta | 0.367199 |
 | 6 | torch_per_label | 0.366758 |
-| 7 | torch_mean_residual | 0.362165 |
-| 8 | torch_mean | 0.360562 |
-| 9 | mean_weighted | 0.360361 |
-| 10 | torch_nn_simple | 0.360085 |
+| 7 | torch_3stage | 0.364276 |
+| 8 | torch_mean_residual | 0.362165 |
+| 9 | torch_mean | 0.360562 |
+| 10 | mean_weighted | 0.360361 |
 
 ## Top 10 Models by Avg of 3 Test Metrics (yso-en)
 
