@@ -220,6 +220,44 @@ Notes / follow-ups:
 **Hypothesis:** compensates for systematic per-model offsets after preprocessing (e.g. log1p);
 minimal parameter increase (just 3 scalars in the 3-model case).
 
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_bias_per_model`
+
+Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=1): NDCG@10=0.683045, NDCG@1000=0.795515, F1@5=0.513818
+- `yso-en` (best epoch=1): NDCG@10=0.623849, NDCG@1000=0.747570, F1@5=0.439277
+- `koko`   (best epoch=4): NDCG@10=0.351774, NDCG@1000=0.466812, F1@5=0.258286
+
+Delta vs baseline `torch_mean_residual` (test metrics):
+- `yso-fi`: −0.004353 NDCG@10, −0.003821 NDCG@1000, −0.007813 F1@5
+- `yso-en`: −0.010195 NDCG@10, −0.009582 NDCG@1000, −0.008108 F1@5
+- `koko`:   −0.005962 NDCG@10, −0.000375 NDCG@1000, −0.003285 F1@5
+
+### Analysis
+
+- This variant is a **consistent regression vs the baseline** across all datasets/metrics in this run.
+  The added capacity (3 extra scalars) did not translate into improved ranking; the most notable drop
+  is on `yso-en` (≈−0.01 on both NDCG@10 and NDCG@1000).
+- Early stopping behavior:
+  - `yso-fi` and `yso-en` chose **epoch 1**, and the train-subset NDCG@1000 degraded slightly afterwards,
+    suggesting the per-model bias quickly moves the model away from a good initial regime.
+  - `koko` chose **epoch 4**, indicating the extra bias can be fit without immediate collapse there, but it
+    still did not improve test ranking.
+- Plausible interpretation: with inputs already log1p-transformed and **non-negative**, adding an additive
+  per-model offset inside the weighted sum effectively introduces a second set of global degrees of freedom
+  (it behaves like a shift scaled by global/residual weights). This can partially duplicate the role of the
+  existing per-label bias term, while being less directly aligned with label base rates, which may make it
+  easier to overfit the early-stop subset without improving generalization.
+
+Notes / follow-ups:
+- If keeping this variant for completeness, consider adding a small L2 penalty on `bias_model` (even 1e-4),
+  or reparameterize it as a *multiplicative* per-model scale (closer to calibration) rather than an additive
+  offset. Both would be new changes, so they should be evaluated as separate variants.
+
 ---
 
 ## Variant 5: `torch_mean_residual_bias_residual`
