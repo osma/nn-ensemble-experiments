@@ -129,6 +129,7 @@ def main():
     train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in e3]
 
     # Per-source gamma correction fit on TRAIN prediction distributions (no labels).
+    # Uses defaults from fit_source_gamma_from_csr (tuned to be less aggressive).
     gammas = fit_source_gamma_from_csr(train_preds)
     print("Gamma per source:", {k: float(g) for k, g in zip(e3, gammas)})
 
