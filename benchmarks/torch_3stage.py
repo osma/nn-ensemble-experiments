@@ -26,13 +26,28 @@ from benchmarks.metrics import (
 
 
 def _fmt_tensor_stats(t: torch.Tensor) -> str:
+    """
+    Format basic tensor stats.
+
+    Note: torch.quantile() can error on very large tensors on some builds/devices.
+    For large tensors we compute quantiles on a deterministic subsample.
+    """
     tt = t.detach().float().cpu()
+    flat = tt.reshape(-1)
+
+    # Deterministic stride-based subsample for quantiles to avoid huge allocations.
+    max_q_n = 2_000_000
+    flat_q = flat
+    if flat.numel() > max_q_n:
+        step = int(np.ceil(flat.numel() / max_q_n))
+        flat_q = flat[::step]
+
     return (
         f"shape={tuple(tt.shape)} "
         f"min={tt.min().item():.6f} "
-        f"p01={torch.quantile(tt.reshape(-1), 0.01).item():.6f} "
-        f"p50={torch.quantile(tt.reshape(-1), 0.50).item():.6f} "
-        f"p99={torch.quantile(tt.reshape(-1), 0.99).item():.6f} "
+        f"p01={torch.quantile(flat_q, 0.01).item():.6f} "
+        f"p50={torch.quantile(flat_q, 0.50).item():.6f} "
+        f"p99={torch.quantile(flat_q, 0.99).item():.6f} "
         f"max={tt.max().item():.6f} "
         f"mean={tt.mean().item():.6f} "
         f"std={tt.std(unbiased=False).item():.6f}"
