@@ -357,6 +357,42 @@ Notes / follow-ups:
 
 ---
 
+## Variant 7 (proposed): `torch_mean_residual_softmax_global_l2_anchor`
+
+**What changes:** combine Variant 1 and Variant 6 by using *both*:
+1) a softmax parameterization for the global weights, and  
+2) an explicit L2 penalty anchoring the resulting `global_w` to the dataset-provided init weights.
+
+- Replace global weights parameterization with:
+  - learn `global_logits[m]` (unconstrained)
+  - compute `global_w = softmax(global_logits)` (non-negative, sums to 1)
+- Keep residual weights additive:
+  - `w_eff[m, l] = global_w[m] + delta_w[m, l]`
+- Add anchor penalty:
+  - let `w0[m]` be `DatasetConfig.ensemble3_init_weights` (or uniform if unavailable)
+  - add `lambda_global * mean((global_w - w0)**2)` to the training loss
+
+**Hypothesis:** both softmax and anchoring individually improved metrics across all datasets. Softmax
+removes degenerate global weight solutions (negative/very large), while the anchor stabilizes training
+by discouraging drift away from a strong dataset-specific initialization. The combination may further
+improve generalization and reduce the “peaks at epoch 1 then degrades” behavior seen in several
+other variants.
+
+### Implementation sketch
+
+- New script: `benchmarks/torch_mean_residual_softmax_global_l2_anchor.py`
+- Model name written to scoreboard: `torch_mean_residual_softmax_global_l2_anchor(...)`
+- CLI:
+  - `--lambda-delta` (same as baseline)
+  - `--lambda-bias` (same as baseline)
+  - `--lambda-global` (new; default should match the Variant 6 anchor strength used previously)
+
+Notes:
+- Keep `LR=0.003` and other defaults unchanged for the first run to keep comparison controlled.
+- If this variant improves, follow-up is a small sweep of `lambda_global` (e.g. 3e-3, 1e-2, 3e-2).
+
+---
+
 ## Notes for future result logging
 
 For each variant, we will eventually record:
