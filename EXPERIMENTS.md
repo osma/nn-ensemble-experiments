@@ -266,11 +266,42 @@ Notes / follow-ups:
 
 - Bias becomes:
   - `bias[l] = bias_global + bias_delta[l]`
-- Regularize `bias_delta` strongly (shrink toward 0); optionally do not regularize `bias_global`
-(or do so very weakly).
+- Regularize `bias_delta` strongly (shrink toward 0); do **not** regularize `bias_global`.
 
 **Hypothesis:** reduces per-label bias overfitting while retaining a dataset-wide intercept; tests whether
 the per-label bias term is doing “too much work”.
+
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_bias_residual`
+
+Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=2): NDCG@10=0.687098, NDCG@1000=0.799073, F1@5=0.521394
+- `yso-en` (best epoch=3): NDCG@10=0.634035, NDCG@1000=0.757160, F1@5=0.447385
+- `koko`   (best epoch=1): NDCG@10=0.357903, NDCG@1000=0.467733, F1@5=0.261421
+
+Delta vs baseline `torch_mean_residual` (test metrics):
+- `yso-fi`: −0.000300 NDCG@10, −0.000263 NDCG@1000, −0.000237 F1@5
+- `yso-en`: −0.000009 NDCG@10, +0.000008 NDCG@1000, +0.000000 F1@5
+- `koko`:   +0.000167 NDCG@10, +0.000546 NDCG@1000, −0.000150 F1@5
+
+### Analysis
+
+- Under the default settings (`LR=0.003`, `lambda_delta=1e-2`, `lambda_bias=1e-3`), this variant is
+  **effectively identical to the baseline** `torch_mean_residual` across all datasets: deltas are at the
+  1e-4 to 1e-3 level.
+- This suggests the baseline’s per-label bias vector is *already* behaving like a “global + small residual”
+  decomposition under L2 regularization, so explicitly parameterizing `bias_global + bias_delta[l]` does not
+  change the learned solution in a meaningful way.
+- The early-stopping epochs differ slightly by dataset (2/3/1), but the final selected test metrics remain
+  essentially the same as the baseline, indicating no systematic stability improvement (or regression) from
+  this reparameterization alone.
+- Practical conclusion: this is a good “sanity check” variant, but **not a compelling new default** unless
+  paired with a different bias-regularization policy (e.g. much stronger `lambda_bias` on `bias_delta` than
+  the baseline uses on `bias`, or an explicit constraint/centering), which would be a separate experiment.
 
 ---
 
