@@ -104,6 +104,44 @@ May be more stable than additive residuals when base score scales differ.
 - Model name written to scoreboard: `torch_mean_residual_globalxdelta(...)`
 - CLI: identical to `torch_mean_residual` (no new flags)
 
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_globalxdelta`
+
+Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=1): NDCG@10=0.676377, NDCG@1000=0.792537, F1@5=0.508068
+- `yso-en` (best epoch=1): NDCG@10=0.624606, NDCG@1000=0.751390, F1@5=0.441895
+- `koko`   (best epoch=1): NDCG@10=0.356553, NDCG@1000=0.469326, F1@5=0.260765
+
+Delta vs baseline `torch_mean_residual` (test metrics):
+- `yso-fi`: −0.011021 NDCG@10, −0.006799 NDCG@1000, −0.013563 F1@5
+- `yso-en`: −0.009438 NDCG@10, −0.005762 NDCG@1000, −0.005490 F1@5
+- `koko`:   −0.001183 NDCG@10, +0.002139 NDCG@1000, −0.000806 F1@5
+
+### Analysis
+
+- This variant is **mostly worse than the additive baseline** on the two YSO datasets, across
+  all three metrics. It is close to neutral on `koko`, with a small gain on NDCG@1000 but
+  slight losses on NDCG@10 and F1@5.
+- Early stopping consistently picked **epoch 1** for all datasets, and train-subset NDCG@1000
+  tended to **decrease after the first epoch**. This suggests the multiplicative parameterization
+  may be more sensitive to optimization (even though the residuals start at zero), or that the
+  model quickly overfits/shifts away from a good initial regime.
+- A plausible failure mode is that multiplicative residuals effectively couple the scale of per-label
+  adjustments to the learned `global_w[m]`. When `global_w[m]` is small, the model has limited
+  ability to “rescue” that source on specific labels; when `global_w[m]` is large, per-label tweaks
+  can become too influential unless `delta_w` is very tightly regularized.
+
+Notes / follow-ups:
+- Try a **smaller learning rate** (e.g. `LR=0.001`) for this variant; multiplicative residuals
+  can make gradients more scale-sensitive.
+- Consider regularizing `global_w` (either via softmax parameterization like Variant 1, or an anchor-to-init penalty as in Variant 6) to reduce drift.
+- If keeping this variant, it may be best framed as “not beneficial under current training defaults”
+  rather than as a new default candidate.
+
 ---
 
 ## Variant 3: `torch_mean_residual_delta_tanh_clamp`
