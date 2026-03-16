@@ -387,6 +387,45 @@ other variants.
 Notes:
 - The anchor strength is a script constant (`LAMBDA_GLOBAL_L2`) to keep comparisons controlled.
 
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_softmax_global_l2_anchor`
+
+Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=6):  NDCG@10=0.698110, NDCG@1000=0.806149, F1@5=0.536644
+- `yso-en` (best epoch=16): NDCG@10=0.645476, NDCG@1000=0.763398, F1@5=0.461776
+- `koko`   (best epoch=5):  NDCG@10=0.361353, NDCG@1000=0.476813, F1@5=0.265713
+
+Delta vs baseline `torch_mean_residual` (test metrics):
+- `yso-fi`: +0.010712 NDCG@10, +0.006813 NDCG@1000, +0.015013 F1@5
+- `yso-en`: +0.011432 NDCG@10, +0.006246 NDCG@1000, +0.014391 F1@5
+- `koko`:   +0.003617 NDCG@10, +0.009626 NDCG@1000, +0.004142 F1@5
+
+Delta vs Variant 6 `torch_mean_residual_l2_anchor_global` (test metrics):
+- `yso-fi`: −0.000221 NDCG@10, +0.000050 NDCG@1000, −0.000174 F1@5
+- `yso-en`: −0.000160 NDCG@10, −0.000042 NDCG@1000, −0.000216 F1@5
+- `koko`:   −0.000002 NDCG@10, +0.000003 NDCG@1000, −0.000018 F1@5
+
+### Analysis
+
+- This combined variant is a **clear improvement over the baseline** `torch_mean_residual` across all datasets
+  and all three test metrics, matching the qualitative behavior of both parent ideas (softmax global weights and
+  anchoring).
+- Compared to the dedicated anchor-only variant (`torch_mean_residual_l2_anchor_global`), results are
+  **effectively a tie** (differences are on the order of 1e-4). This suggests that, with the current training
+  defaults, the anchor penalty is doing most of the stabilizing work; adding softmax mainly changes the
+  parameterization/constraints without producing a measurable additional gain.
+- Training dynamics in this run show **non-trivial best epochs** (6 / 16 / 5), rather than collapsing to epoch 1.
+  This aligns with the hypothesis that anchoring (and/or softmax) reduces “early peak then degrade” behavior and
+  supports longer training without drifting into worse regimes.
+- Practical takeaway: keep this variant as a strong candidate in the “stable improvements” bucket. If choosing
+  between it and Variant 6, prefer whichever constraint you want operationally:
+  - pick Variant 7 if you want global weights to remain a convex combination (non-negative, sum to 1),
+  - pick Variant 6 if you want to preserve the possibility of negative/global scaling while still anchoring.
+
 ---
 
 ## Notes for future result logging
