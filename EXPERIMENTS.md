@@ -428,7 +428,57 @@ Delta vs Variant 6 `torch_mean_residual_l2_anchor_global` (test metrics):
 
 ---
 
-## Notes for future result logging
+## Proposed next experiment: `torch_mean_residual_freq_weighted_delta` (inspired by `torch_per_label`)
+
+**What changes:** keep the best-performing stabilization idea (global-weight anchoring), but make the
+**per-label residual shrinkage strength depend on label frequency**.
+
+Motivation / inspiration from `torch_per_label`:
+- `torch_per_label` wins largely because it can learn a *different mixture of base models per label*.
+- `torch_mean_residual` already has this capacity via `delta_w[m, l]`, but a **single global** `lambda_delta`
+  is a blunt instrument for very large label spaces: it likely over-shrinks frequent labels (hurting fit),
+  while under-regularizing rare labels (risking overfit).
+- A standard regularization trick is **stronger shrinkage for rarer labels**, weaker for common labels.
+
+### Formulation
+
+Keep the baseline logits form:
+
+- `w_eff[m, l] = global_w[m] + delta_w[m, l]`
+- `logits[b, l] = sum_m w_eff[m, l] * x[b, m, l] + bias[l]`
+
+Keep the global-weight stabilization (recommended to include in this experiment):
+- L2 anchor penalty to dataset init weights (Variant 6), optionally with softmax global weights (Variant 7).
+
+Change only the delta regularizer to a frequency-weighted L2:
+
+Let `freq[l] = number of positive training examples for label l` (from `y_train_true`).
+
+Define per-label weights, e.g.:
+
+- `alpha[l] = 1 / sqrt(freq[l] + 1)`
+
+Optionally normalize to keep the average penalty scale consistent:
+- `alpha = alpha / mean(alpha)`
+
+Then use:
+
+- `delta_l2 = mean_{m,l}( alpha[l] * delta_w[m,l]^2 )`
+- `loss_reg_delta = lambda_delta * delta_l2`
+
+(Keep bias regularization unchanged for this experiment to isolate the effect.)
+
+### Hypothesis
+
+- Frequent labels benefit from being allowed larger per-label mixture adjustments (closer to `torch_per_label` behavior).
+- Rare labels remain strongly regularized, reducing overfitting and preventing the “epoch 1 peak then degrade” failure mode.
+
+### Suggested sweep (small)
+
+Run this variant with global anchoring enabled and sweep only `lambda_delta` modestly:
+- `lambda_delta ∈ {1e-2, 3e-3, 1e-3, 3e-4}`
+
+### Notes for future result logging
 
 For each variant, we will eventually record:
 - Command used (dataset, lambda settings, any new hyperparameters like `delta_max`)
