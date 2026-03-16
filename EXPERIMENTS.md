@@ -166,6 +166,44 @@ Notes:
 - `delta_max` is implemented as a module-level constant to keep comparisons controlled (no CLI flag).
 - Regularization is applied to `delta_raw` (not `delta_w`) for smoother optimization when tanh saturates.
 
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_delta_tanh_clamp`
+
+Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+
+Observed behavior:
+- Early stopping picked **epoch 1 for all datasets**.
+- Train-subset NDCG@1000 tended to **decrease after epoch 1**, suggesting the model quickly moves away
+  from a good initial regime under the default LR/regularization.
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=1): NDCG@10=0.676865, NDCG@1000=0.793029, F1@5=0.509067
+- `yso-en` (best epoch=1): NDCG@10=0.623692, NDCG@1000=0.750391, F1@5=0.441138
+- `koko`   (best epoch=1): NDCG@10=0.356272, NDCG@1000=0.468751, F1@5=0.260805
+
+Delta vs baseline `torch_mean_residual` (test metrics):
+- `yso-fi`: −0.010533 NDCG@10, −0.006307 NDCG@1000, −0.012564 F1@5
+- `yso-en`: −0.010352 NDCG@10, −0.006761 NDCG@1000, −0.006247 F1@5
+- `koko`:   −0.001464 NDCG@10, +0.001564 NDCG@1000, −0.000766 F1@5
+
+### Analysis
+
+- Overall this clamp variant is **worse than the additive baseline** on both YSO datasets across all three metrics.
+- On `koko` it is **very close to neutral**, with a small gain on deep ranking (NDCG@1000) but slight losses on
+  NDCG@10 and F1@5.
+- The fact that the best epoch is consistently **1** suggests either:
+  - The tanh parameterization + default `LR=0.003` causes too-aggressive movement in `delta_raw`/`bias`, or
+  - The clamp simply removes beneficial capacity (i.e., some labels benefit from larger residuals than `delta_max=0.25` permits).
+- Unlike the multiplicative `globalxdelta` variant, this one still preserves the additive structure; the degradation
+  therefore points more specifically to the **bounded residual capacity** (and/or the optimization dynamics induced by tanh).
+
+Notes / follow-ups:
+- Try a smaller learning rate (e.g. `LR=0.001`) to see if the post-epoch-1 drop is an optimization artifact.
+- If keeping the clamp idea, consider increasing `delta_max` modestly (e.g. 0.5) or making it dataset-tuned, but that
+  would reduce the “controlled comparison” nature unless done systematically.
+
 ---
 
 ## Variant 4: `torch_mean_residual_bias_per_model`
