@@ -66,6 +66,7 @@ additional scripts locally, update this table to match the remaining files.
 | `mean_weighted` | Non‑torch | Grid‑searched weighted mean ensemble (select by train NDCG@1000) | [benchmarks/mean_weighted.py](benchmarks/mean_weighted.py) |
 | `torch_mean` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_mean.py](benchmarks/torch_mean.py) |
 | `torch_mean_residual` | Torch | Global per-model weights + per-label residual weights + bias (logits), BCEWithLogitsLoss, explicit L2 penalties; early stopping on train subset NDCG@1000 | [benchmarks/torch_mean_residual.py](benchmarks/torch_mean_residual.py) |
+| `torch_mean_residual_globalxdelta` | Torch (experimental) | `torch_mean_residual` variant with multiplicative per-label residuals: `w_eff[m,l]=global_w[m]*(1+delta_w[m,l])` | [benchmarks/torch_mean_residual_globalxdelta.py](benchmarks/torch_mean_residual_globalxdelta.py) |
 | `torch_nn_simple` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_nn_simple.py](benchmarks/torch_nn_simple.py) |
 | `torch_nn_split` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_nn_split.py](benchmarks/torch_nn_split.py) |
 | `torch_nn_split_per_label` | Torch | Learned 1×1 Conv1d over base models (probabilities), BCE loss, fixed log1p preprocessing | [benchmarks/torch_nn_split_per_label.py](benchmarks/torch_nn_split_per_label.py) |
