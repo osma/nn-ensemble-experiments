@@ -428,6 +428,67 @@ Delta vs Variant 6 `torch_mean_residual_l2_anchor_global` (test metrics):
 
 ---
 
+## Variant 8: `torch_mean_residual_freq_weighted_delta`
+
+**What changes:** weight the per-label residual L2 penalty by label frequency.
+
+- Keep the baseline logits form:
+  - `w_eff[m, l] = global_w[m] + delta_w[m, l]`
+  - `logits[b, l] = sum_m w_eff[m, l] * x[b, m, l] + bias[l]`
+- Change only the delta regularizer:
+  - `freq[l] = # positive train examples for label l`
+  - `alpha[l] = 1 / sqrt(freq[l] + 1)`, normalized so `mean(alpha)=1`
+  - `delta_l2 = mean_{m,l}( alpha[l] * delta_w[m,l]^2 )`
+  - `loss_reg_delta = lambda_delta * delta_l2`
+
+**Hypothesis:** a single global `lambda_delta` is a blunt instrument for large label spaces. Weighting the
+penalty shrinks rare labels harder (reduce overfit) while allowing frequent labels more per-label flexibility
+(closer to `torch_per_label` behavior).
+
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_freq_weighted_delta`
+
+Run notes:
+- Device: CPU
+- Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+- Hyperparams: `lambda_delta=1e-2`, `lambda_bias=1e-3` (defaults)
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=2): NDCG@10=0.687567, NDCG@1000=0.799662, F1@5=0.522855
+- `yso-en` (best epoch=3): NDCG@10=0.634661, NDCG@1000=0.757517, F1@5=0.447683
+- `koko`   (best epoch=1): NDCG@10=0.357814, NDCG@1000=0.466835, F1@5=0.261462
+
+Delta vs baseline `torch_mean_residual` (test metrics from `SCOREBOARD.md`):
+- `yso-fi`: +0.000169 NDCG@10, +0.000326 NDCG@1000, +0.001224 F1@5
+- `yso-en`: +0.000617 NDCG@10, +0.000365 NDCG@1000, +0.000298 F1@5
+- `koko`:   +0.000078 NDCG@10, −0.000352 NDCG@1000, −0.000109 F1@5
+
+### Analysis
+
+- Overall this is a **near-tie with the baseline** `torch_mean_residual` under the default settings.
+  Improvements on `yso-fi`/`yso-en` are very small (1e-4 to 1e-3) and could be within run-to-run noise.
+- On `koko` it is **slightly worse** on deep ranking (NDCG@1000) and F1@5, also at a very small magnitude.
+- Training dynamics observed in the run output:
+  - `yso-fi`: peaked at epoch 2 then degraded sharply by epoch 4 (train subset NDCG@1000 dropped to 0.7659).
+  - `yso-en`: peaked at epoch 3; later epochs showed mixed behavior (test NDCG@10 continued rising through epoch 5,
+    but early-stop metric did not).
+  - `koko`: peaked at epoch 1 and degraded rapidly; this mirrors some other variants’ “epoch 1 peak then degrade” behavior.
+- Interpretation: frequency-weighting *alone* does not appear to be a strong stabilizer or consistent win. It may still be
+  useful as a complementary idea, but the earlier **global weight anchoring** variants (6/7) produced much larger, consistent
+  gains across datasets. If we revisit this, the most informative next step is to **combine frequency-weighted delta with global
+  anchoring** (either L2 anchor or softmax+anchor) while keeping everything else identical.
+
+Notes / follow-ups:
+- If testing further: combine with Variant 6 (L2 anchor on `global_w`) and keep the same defaults, then optionally do a small
+  sweep on `lambda_delta` (e.g. `1e-2, 3e-3, 1e-3`) to see whether the weighted penalty enables a lower global shrinkage without
+  destabilizing rare labels.
+- Consider logging a quick diagnostic of `alpha` distribution (min/median/p99) to ensure the weighting is not overly extreme on
+  `koko` (which may have different label-frequency characteristics).
+
+---
+
 ## Proposed next experiment: `torch_mean_residual_freq_weighted_delta` (inspired by `torch_per_label`)
 
 **What changes:** keep the best-performing stabilization idea (global-weight anchoring), but make the
