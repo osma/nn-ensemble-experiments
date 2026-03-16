@@ -98,6 +98,12 @@ Notes / follow-ups:
 **Hypothesis:** per-label adjustments should be relative to the global strength of each base model.
 May be more stable than additive residuals when base score scales differ.
 
+### Implementation
+
+- Script: `benchmarks/torch_mean_residual_globalxdelta.py`
+- Model name written to scoreboard: `torch_mean_residual_globalxdelta(...)`
+- CLI: identical to `torch_mean_residual` (no new flags)
+
 ---
 
 ## Variant 3: `torch_mean_residual_delta_tanh_clamp`
