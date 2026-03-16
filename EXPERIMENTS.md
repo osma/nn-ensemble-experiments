@@ -316,6 +316,45 @@ Delta vs baseline `torch_mean_residual` (test metrics):
 **Hypothesis:** clarifies how much improvement comes from moving global weights vs. relying on per-label residuals;
 may improve cross-dataset stability and reduce overfitting.
 
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_l2_anchor_global`
+
+Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=6):  NDCG@10=0.698331, NDCG@1000=0.806099, F1@5=0.536818
+- `yso-en` (best epoch=16): NDCG@10=0.645636, NDCG@1000=0.763440, F1@5=0.461992
+- `koko`   (best epoch=5):  NDCG@10=0.361355, NDCG@1000=0.476810, F1@5=0.265731
+
+Delta vs baseline `torch_mean_residual` (test metrics):
+- `yso-fi`: +0.010933 NDCG@10, +0.006763 NDCG@1000, +0.015187 F1@5
+- `yso-en`: +0.011592 NDCG@10, +0.006288 NDCG@1000, +0.014607 F1@5
+- `koko`:   +0.003619 NDCG@10, +0.009623 NDCG@1000, +0.004160 F1@5
+
+### Analysis
+
+- This variant is a **consistent improvement across all three datasets**, improving **all three test metrics**
+  in this run. The gains are especially meaningful on the YSO datasets (≈+0.011 NDCG@10 and ≈+0.014–0.015 F1@5),
+  and also show a clear lift on deep ranking (NDCG@1000) on `koko`.
+- Compared to `torch_mean_residual_softmax_global`, the effect is conceptually similar (restricting/regularizing
+  global weights), but it does so **without constraining** `global_w` to be a simplex point. That may preserve
+  some flexibility (e.g. allowing negative weights if ever useful) while still discouraging drift away from the
+  dataset-provided initialization.
+- The long best-epoch for `yso-en` (epoch 16) suggests the anchor penalty may help *stabilize later-epoch training*
+  by keeping global weights near `w0` while allowing `delta_w`/`bias` to improve gradually. In contrast, several
+  other variants tended to peak at epoch 1 and then degrade.
+- Practical conclusion: this is a strong candidate to keep as a default `torch_mean_residual` variant, or at least
+  as a “stability regularization” knob to use when global weights drift harms generalization.
+
+Notes / follow-ups:
+- Consider exposing `lambda_global` as a CLI flag for a small sweep (e.g. 3e-3, 1e-2, 3e-2) to see if the gains
+  saturate or if there is a dataset-sensitive optimum. (For controlled comparisons, keep it constant unless doing
+  an explicit sweep.)
+- If adding diagnostics: print `||global_w - w0||_2` at the best epoch (already computed via `global_anchor_l2()`)
+  to confirm whether improvements correlate with reduced global drift vs. changes in `delta_w`/`bias`.
+
 ---
 
 ## Notes for future result logging
