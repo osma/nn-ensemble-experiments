@@ -30,6 +30,9 @@ def _fmt_tensor_stats(t: torch.Tensor) -> str:
     return (
         f"shape={tuple(tt.shape)} "
         f"min={tt.min().item():.6f} "
+        f"p01={torch.quantile(tt.reshape(-1), 0.01).item():.6f} "
+        f"p50={torch.quantile(tt.reshape(-1), 0.50).item():.6f} "
+        f"p99={torch.quantile(tt.reshape(-1), 0.99).item():.6f} "
         f"max={tt.max().item():.6f} "
         f"mean={tt.mean().item():.6f} "
         f"std={tt.std(unbiased=False).item():.6f}"
@@ -126,7 +129,7 @@ def main():
     train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in e3]
 
     # Per-source gamma correction fit on TRAIN prediction distributions (no labels).
-    gammas = fit_source_gamma_from_csr(train_preds, quantile=0.95, target=0.5)
+    gammas = fit_source_gamma_from_csr(train_preds)
     print("Gamma per source:", {k: float(g) for k, g in zip(e3, gammas)})
 
     # Keep X_train on CPU; move only minibatches to GPU.
@@ -288,8 +291,12 @@ def main():
             y_train_true_eval, train_eval_output, k=1000
         )
 
+        # Output distribution diagnostics on early-stop subset (helps detect collapse / saturation).
+        print(f"train_eval_output: {_fmt_tensor_stats(train_eval_output)}")
+
         # --- Test evaluation (batched; no CSR conversion) ---
         output_test = _predict_in_batches(model, X_test)
+        print(f"test_output: {_fmt_tensor_stats(output_test)}")
         test_metrics = {}
         for k in K_VALUES:
             ndcg, n_used_test = ndcg_at_k_dense(y_test_true, output_test, k=k)

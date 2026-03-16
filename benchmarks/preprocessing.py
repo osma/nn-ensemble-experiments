@@ -44,12 +44,12 @@ def csr_to_logit_tensor(csr: csr_matrix, *, eps: float = 1e-6) -> torch.Tensor:
 def fit_source_gamma_from_csr(
     matrices: list[csr_matrix],
     *,
-    quantile: float = 0.95,
-    target: float = 0.5,
+    quantile: float = 0.99,
+    target: float = 0.3,
     eps: float = 1e-12,
     sample_n: int = 2_000_000,
     seed: int = 1337,
-    clip_gamma: tuple[float, float] = (0.05, 5.0),
+    clip_gamma: tuple[float, float] = (0.5, 2.0),
 ) -> list[float]:
     """
     Fit per-source gamma values from training prediction distributions (no labels).
