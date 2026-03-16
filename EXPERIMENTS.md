@@ -28,6 +28,11 @@ Current reference formulation (conceptual):
   - L2 penalty on `delta_w` (shrink residuals toward 0)
   - L2 penalty on `bias`
 
+Baseline reference (from `SCOREBOARD.md`, test metrics):
+- `yso-fi`: NDCG@10=0.687398, NDCG@1000=0.799336, F1@5=0.521631
+- `yso-en`: NDCG@10=0.634044, NDCG@1000=0.757152, F1@5=0.447385
+- `koko`:   NDCG@10=0.357736, NDCG@1000=0.467187, F1@5=0.261571
+
 ---
 
 ## Variant 1: `torch_mean_residual_softmax_global`
@@ -42,6 +47,43 @@ Current reference formulation (conceptual):
 
 **Hypothesis:** stabilizes optimization and discourages degenerate negative/large global weights;
 tests whether unconstrained global scaling is important.
+
+### Results (2026-03-16)
+
+Command:
+- `./regenerate_scoreboard.sh --models torch_mean_residual_softmax_global`
+
+Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
+
+Test metrics (best epoch per dataset from run output):
+- `yso-fi` (best epoch=5):  NDCG@10=0.696986, NDCG@1000=0.804392, F1@5=0.536324
+- `yso-en` (best epoch=8):  NDCG@10=0.648991, NDCG@1000=0.766754, F1@5=0.461473
+- `koko`   (best epoch=4):  NDCG@10=0.361896, NDCG@1000=0.477831, F1@5=0.266607
+
+Delta vs baseline `torch_mean_residual` (test metrics):
+- `yso-fi`: +0.009588 NDCG@10, +0.005056 NDCG@1000, +0.014693 F1@5
+- `yso-en`: +0.014947 NDCG@10, +0.009602 NDCG@1000, +0.014088 F1@5
+- `koko`:   +0.004160 NDCG@10, +0.010644 NDCG@1000, +0.005036 F1@5
+
+### Analysis
+
+- This variant is a **consistent improvement across all three datasets**, and improves
+  **all three reported test metrics** on each dataset in this run.
+- The biggest gains are on `yso-en` (notably NDCG@10 and F1@5), suggesting that
+  constraining global weights to a convex combination may reduce harmful global
+  weight drift and let `delta_w` and `bias` do the fine-grained per-label work.
+- `koko` gains are smaller in absolute terms but still positive, with the largest
+  lift on NDCG@1000 (+0.0106). This suggests the effect is not purely a top-10
+  precision bump; it also improves deeper ranking.
+
+Notes / follow-ups:
+- The run used the default regularization (`lambda_delta=1e-2`, `lambda_bias=1e-3`).
+  Since softmax removes the possibility of negative global weights, it may be worth
+  re-sweeping `lambda_delta` slightly downward (e.g. 3e-3, 1e-3) to see if residuals
+  can be allowed to carry more signal without overfitting.
+- Consider adding debug prints of `global_w()` at the best epoch to verify whether
+  the learned convex weights remain close to dataset-provided initial weights or
+  meaningfully shift.
 
 ---
 
