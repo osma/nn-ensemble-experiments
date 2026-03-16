@@ -44,6 +44,9 @@
 | torch_mean_residual_delta_tanh_clamp(bonsai,fasttext,mllm) | yso-en | 1 | 0.691627 | 0.796332 | 0.623692 | 0.750391 | 0.441138 |
 | torch_mean_residual_delta_tanh_clamp(bonsai,fasttext,mllm) | yso-fi | 1 | 0.699828 | 0.803911 | 0.676865 | 0.793029 | 0.509067 |
 | torch_mean_residual_delta_tanh_clamp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.432176 | 0.548682 | 0.356272 | 0.468751 | 0.260805 |
+| torch_mean_residual_freq_weighted_delta(bonsai,fasttext,mllm) | yso-en | 3 | 0.702859 | 0.801762 | 0.634661 | 0.757517 | 0.447683 |
+| torch_mean_residual_freq_weighted_delta(bonsai,fasttext,mllm) | yso-fi | 2 | 0.710826 | 0.811934 | 0.687567 | 0.799662 | 0.522855 |
+| torch_mean_residual_freq_weighted_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.435295 | 0.548706 | 0.357814 | 0.466835 | 0.261462 |
 | torch_mean_residual_globalxdelta(bonsai,fasttext,mllm) | yso-en | 1 | 0.692306 | 0.796779 | 0.624606 | 0.751390 | 0.441895 |
 | torch_mean_residual_globalxdelta(bonsai,fasttext,mllm) | yso-fi | 1 | 0.699648 | 0.803570 | 0.676377 | 0.792537 | 0.508068 |
 | torch_mean_residual_globalxdelta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.432541 | 0.549126 | 0.356553 | 0.469326 | 0.260765 |
@@ -110,9 +113,9 @@
 | 5 | torch_per_label_l1_delta | 0.681959 |
 | 6 | torch_per_label_mlp | 0.681705 |
 | 7 | torch_mean_residual_lowrank_mix | 0.680352 |
-| 8 | torch_mean_residual_bias_residual | 0.674655 |
-| 9 | torch_mean_residual | 0.674558 |
-| 10 | torch_mean_residual_globalxdelta | 0.671084 |
+| 8 | torch_mean_residual_freq_weighted_delta | 0.674671 |
+| 9 | torch_mean_residual_bias_residual | 0.674655 |
+| 10 | torch_mean_residual | 0.674558 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
@@ -142,7 +145,7 @@
 | 7 | torch_nn_split_per_label | 0.556984 |
 | 8 | torch_mean_residual_lowrank_mix | 0.555425 |
 | 9 | torch_per_label_residual_lowrank_mix_active | 0.553937 |
-| 10 | torch_lowrank_residual_epsclamp | 0.548408 |
+| 10 | torch_mean_residual_freq_weighted_delta | 0.548451 |
 
 ## Top 10 Models by Avg of 3 Test Metrics (koko)
 
