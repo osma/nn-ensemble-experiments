@@ -60,7 +60,7 @@ def _print_model_debug(model: Torch3Stage, *, prefix: str) -> None:
 DEVICE = get_device()
 EPOCHS = 20
 LR = 1e-3
-BATCH_SIZE = 32
+BATCH_SIZE = 256
 K_VALUES = (10, 1000)
 
 PATIENCE = 2
