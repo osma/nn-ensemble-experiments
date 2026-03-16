@@ -95,7 +95,7 @@ PAIRWISE_SEED = 1337
 # Regularization (torch_mean_residual-style)
 WEIGHT_DECAY = 0.0  # rely on explicit penalties
 LAMBDA_GLOBAL_ANCHOR_L2 = 1e-3
-LAMBDA_DELTA_L2 = 1e-2
+LAMBDA_DELTA_L2 = 1e-3
 LAMBDA_BIAS_L2 = 1e-3
 
 
