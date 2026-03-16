@@ -35,6 +35,9 @@
 | torch_mean_residual(bonsai,fasttext,mllm) | yso-en | 3 | 0.702887 | 0.801773 | 0.634044 | 0.757152 | 0.447385 |
 | torch_mean_residual(bonsai,fasttext,mllm) | yso-fi | 2 | 0.710736 | 0.811807 | 0.687398 | 0.799336 | 0.521631 |
 | torch_mean_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.435223 | 0.548767 | 0.357736 | 0.467187 | 0.261571 |
+| torch_mean_residual_globalxdelta(bonsai,fasttext,mllm) | yso-en | 1 | 0.692306 | 0.796779 | 0.624606 | 0.751390 | 0.441895 |
+| torch_mean_residual_globalxdelta(bonsai,fasttext,mllm) | yso-fi | 1 | 0.699648 | 0.803570 | 0.676377 | 0.792537 | 0.508068 |
+| torch_mean_residual_globalxdelta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.432541 | 0.549126 | 0.356553 | 0.469326 | 0.260765 |
 | torch_mean_residual_lowrank_mix(bonsai,fasttext,mllm) | yso-en | 5 | 0.703847 | 0.804152 | 0.640272 | 0.762450 | 0.455739 |
 | torch_mean_residual_lowrank_mix(bonsai,fasttext,mllm) | yso-fi | 5 | 0.724906 | 0.820559 | 0.697428 | 0.804458 | 0.536466 |
 | torch_mean_residual_lowrank_mix(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.438590 | 0.559694 | 0.361132 | 0.474147 | 0.266729 |
@@ -91,10 +94,10 @@
 | 4 | torch_per_label_mlp | 0.681705 |
 | 5 | torch_mean_residual_lowrank_mix | 0.680352 |
 | 6 | torch_mean_residual | 0.674558 |
-| 7 | torch_per_label_residual_lowrank_mix_active | 0.669301 |
-| 8 | mean_weighted | 0.665660 |
-| 9 | torch_mean | 0.664907 |
-| 10 | torch_nn_simple | 0.664545 |
+| 7 | torch_mean_residual_globalxdelta | 0.671084 |
+| 8 | torch_per_label_residual_lowrank_mix_active | 0.669301 |
+| 9 | mean_weighted | 0.665660 |
+| 10 | torch_mean | 0.664907 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
@@ -138,8 +141,8 @@
 | 6 | torch_per_label_l1_delta | 0.367199 |
 | 7 | torch_per_label | 0.366758 |
 | 8 | torch_3stage | 0.363332 |
-| 9 | torch_mean_residual | 0.362165 |
-| 10 | torch_mean | 0.360562 |
+| 9 | torch_mean_residual_globalxdelta | 0.362215 |
+| 10 | torch_mean_residual | 0.362165 |
 
 ## Top 10 Models by Avg of 3 Test Metrics (yso-en)
 
