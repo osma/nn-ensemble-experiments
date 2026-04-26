@@ -117,6 +117,7 @@ Notes:
 Below are results from running:
 
 - `./regenerate_scoreboard.sh --models torch_per_label_global_plus_delta`
+- `./regenerate_scoreboard.sh --models torch_per_label_softmax_global`
 
 (Results are copied from `SCOREBOARD.md` and the benchmark console output.)
 
@@ -126,7 +127,9 @@ Below are results from running:
 | torch_per_label_global_plus_delta | yso-fi | 2 | 0.692057 | 0.803521 | 0.524475 | Selected by train subset NDCG@1000 |
 | torch_per_label_global_plus_delta | yso-en | 3 | 0.635216 | 0.758246 | 0.449534 | Selected by train subset NDCG@1000 |
 | torch_per_label_global_plus_delta | koko | 1 | 0.356868 | 0.465507 | 0.260260 | Selected by train subset NDCG@1000 |
-| torch_per_label_softmax_global |  |  |  |  |  |  |
+| torch_per_label_softmax_global | yso-fi | 4 | 0.704736 | 0.813194 | 0.540867 | Selected by train subset NDCG@1000 |
+| torch_per_label_softmax_global | yso-en | 14 | 0.661455 | 0.776412 | 0.474309 | Selected by train subset NDCG@1000 |
+| torch_per_label_softmax_global | koko | 3 | 0.363673 | 0.477691 | 0.266434 | Selected by train subset NDCG@1000 |
 | torch_per_label_global_times_scale |  |  |  |  |  |  |
 | torch_per_label_bias_global_plus_delta |  |  |  |  |  |  |
 
@@ -168,3 +171,50 @@ Below are results from running:
 - Implement `torch_per_label_softmax_global` to stabilize the shared mixture (prevent negative / exploding global weights).
 - Alternatively/additionally, introduce `lambda_delta * ||w_delta||_2^2` (or an anchor penalty to dataset init weights)
   and tune `lambda_delta`.
+
+---
+
+## Analysis: `torch_per_label_softmax_global`
+
+**Overall:** This variant **improves substantially over** `torch_per_label_global_plus_delta` and is **very competitive** with the baseline `torch_per_label`. It slightly beats the baseline on yso-en (all three metrics) and is close-but-not-better on yso-fi; it improves on koko.
+
+**Relative to baseline (`torch_per_label`)**
+- **yso-fi:** slightly worse overall.
+  - baseline: NDCG@10=0.710171, NDCG@1000=0.816454, F1@5=0.544132
+  - softmax_global: NDCG@10=0.704736, NDCG@1000=0.813194, F1@5=0.540867
+  - deltas: -0.0054 NDCG@10, -0.0033 NDCG@1000, -0.0033 F1@5
+- **yso-en:** **better** across all three test metrics.
+  - baseline: NDCG@10=0.659227, NDCG@1000=0.771079, F1@5=0.473627
+  - softmax_global: NDCG@10=0.661455, NDCG@1000=0.776412, F1@5=0.474309
+  - deltas: +0.0022 NDCG@10, +0.0053 NDCG@1000, +0.0007 F1@5
+- **koko:** **better** across all three test metrics.
+  - baseline: NDCG@10=0.361643, NDCG@1000=0.473905, F1@5=0.264727
+  - softmax_global: NDCG@10=0.363673, NDCG@1000=0.477691, F1@5=0.266434
+  - deltas: +0.0020 NDCG@10, +0.0038 NDCG@1000, +0.0017 F1@5
+
+**Relative to `torch_per_label_global_plus_delta`**
+- **yso-fi:** big improvement.
+  - global+delta: NDCG@10=0.692057, NDCG@1000=0.803521, F1@5=0.524475
+  - softmax_global: NDCG@10=0.704736, NDCG@1000=0.813194, F1@5=0.540867
+  - deltas: +0.0127 NDCG@10, +0.0097 NDCG@1000, +0.0164 F1@5
+- **yso-en:** big improvement.
+  - global+delta: NDCG@10=0.635216, NDCG@1000=0.758246, F1@5=0.449534
+  - softmax_global: NDCG@10=0.661455, NDCG@1000=0.776412, F1@5=0.474309
+  - deltas: +0.0262 NDCG@10, +0.0182 NDCG@1000, +0.0248 F1@5
+- **koko:** slight improvement.
+  - global+delta: NDCG@10=0.356868, NDCG@1000=0.465507, F1@5=0.260260
+  - softmax_global: NDCG@10=0.363673, NDCG@1000=0.477691, F1@5=0.266434
+  - deltas: +0.0068 NDCG@10, +0.0122 NDCG@1000, +0.0062 F1@5
+
+**Training dynamics / stability**
+- **yso-fi:** peaked at epoch 4, then degraded (epoch 6 was clearly worse). Early stopping selected epoch 4 correctly.
+- **yso-en:** improved steadily through epoch 14 and then plateaued/slightly drifted; early stopping selected epoch 14.
+- **koko:** peaked at epoch 3 and then degraded; early stopping selected epoch 3.
+
+**Interpretation**
+- Constraining the shared/global weights to a convex mixture (softmax) + keeping an explicit L2 penalty on `w_delta` seems to help prevent the “drift away from a good initialization” failure mode seen in the unconstrained global+delta setup.
+- Gains are largest on yso-en, suggesting that the dataset benefits from a stable global mixture with limited per-label deviations.
+
+**Next steps**
+- Consider adding a learned global scale `s` so `w_eff = s * g + w_delta` (keeps convex mixture shape but allows overall scale).
+- Try a small grid for `LAMBDA_DELTA_L2` (e.g. {3e-4, 1e-3, 3e-3, 1e-2}) to see if yso-fi can match baseline while preserving yso-en gains.
