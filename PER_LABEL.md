@@ -112,14 +112,59 @@ Notes:
 
 ---
 
-## Results log (to be filled in)
+## Results log
 
-Add rows here once each variant has been benchmarked.
+Below are results from running:
+
+- `./regenerate_scoreboard.sh --models torch_per_label_global_plus_delta`
+
+(Results are copied from `SCOREBOARD.md` and the benchmark console output.)
 
 | Variant | Dataset | Best epoch | Test NDCG@10 | Test NDCG@1000 | Test F1@5 | Notes |
 |--------|---------|------------|--------------|----------------|-----------|-------|
-| (baseline) torch_per_label |  |  |  |  |  |  |
-| torch_per_label_global_plus_delta |  |  |  |  |  | Implemented in `benchmarks/torch_per_label_global_plus_delta.py` |
+| (baseline) torch_per_label |  |  |  |  |  | See `SCOREBOARD.md` |
+| torch_per_label_global_plus_delta | yso-fi | 2 | 0.692057 | 0.803521 | 0.524475 | Selected by train subset NDCG@1000 |
+| torch_per_label_global_plus_delta | yso-en | 3 | 0.635216 | 0.758246 | 0.449534 | Selected by train subset NDCG@1000 |
+| torch_per_label_global_plus_delta | koko | 1 | 0.356868 | 0.465507 | 0.260260 | Selected by train subset NDCG@1000 |
 | torch_per_label_softmax_global |  |  |  |  |  |  |
 | torch_per_label_global_times_scale |  |  |  |  |  |  |
 | torch_per_label_bias_global_plus_delta |  |  |  |  |  |  |
+
+---
+
+## Analysis: `torch_per_label_global_plus_delta`
+
+**Overall:** This variant is clearly competitive but does **not** beat the baseline `torch_per_label` on any dataset in the current scoreboard snapshot.
+
+**Relative to baseline (`torch_per_label`)**
+- **yso-fi:** worse across all three test metrics.
+  - baseline: NDCG@10=0.710171, NDCG@1000=0.816454, F1@5=0.544132
+  - global+delta: NDCG@10=0.692057, NDCG@1000=0.803521, F1@5=0.524475
+  - deltas: -0.0181 NDCG@10, -0.0129 NDCG@1000, -0.0197 F1@5
+- **yso-en:** worse across all three test metrics.
+  - baseline: NDCG@10=0.659227, NDCG@1000=0.771079, F1@5=0.473627
+  - global+delta: NDCG@10=0.635216, NDCG@1000=0.758246, F1@5=0.449534
+  - deltas: -0.0240 NDCG@10, -0.0128 NDCG@1000, -0.0241 F1@5
+- **koko:** slightly worse across all three test metrics.
+  - baseline: NDCG@10=0.361643, NDCG@1000=0.473905, F1@5=0.264727
+  - global+delta: NDCG@10=0.356868, NDCG@1000=0.465507, F1@5=0.260260
+  - deltas: -0.0048 NDCG@10, -0.0084 NDCG@1000, -0.0045 F1@5
+
+**Training dynamics / stability**
+- On **yso-fi** and **koko**, the train-subset NDCG@1000 peaked early and then degraded noticeably by later epochs.
+  This suggests the model can overfit or drift away from the good initialization when trained with the same unconstrained
+  parameterization and no explicit regularization on `w_delta`.
+- On **yso-en**, test metrics continued to improve slightly through epoch 5, but early stopping still selected epoch 3
+  based on the train-subset criterion.
+
+**Interpretation**
+- The reparameterization alone (without an explicit penalty/constraint on `w_delta`) does not appear to be enough to
+  improve generalization vs the fully-free per-label weights baseline.
+- Given the observed “early peak then degrade” pattern, the most direct next experiment is to **add an explicit L2
+  penalty on `w_delta`** (or constrain `w_global` via softmax) to force the model to stay close to the global mixture
+  unless per-label evidence strongly supports deviating.
+
+**Next steps**
+- Implement `torch_per_label_softmax_global` to stabilize the shared mixture (prevent negative / exploding global weights).
+- Alternatively/additionally, introduce `lambda_delta * ||w_delta||_2^2` (or an anchor penalty to dataset init weights)
+  and tune `lambda_delta`.
