@@ -119,7 +119,7 @@ Add rows here once each variant has been benchmarked.
 | Variant | Dataset | Best epoch | Test NDCG@10 | Test NDCG@1000 | Test F1@5 | Notes |
 |--------|---------|------------|--------------|----------------|-----------|-------|
 | (baseline) torch_per_label |  |  |  |  |  |  |
-| torch_per_label_global_plus_delta |  |  |  |  |  |  |
+| torch_per_label_global_plus_delta |  |  |  |  |  | Implemented in `benchmarks/torch_per_label_global_plus_delta.py` |
 | torch_per_label_softmax_global |  |  |  |  |  |  |
 | torch_per_label_global_times_scale |  |  |  |  |  |  |
 | torch_per_label_bias_global_plus_delta |  |  |  |  |  |  |
