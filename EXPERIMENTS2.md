@@ -37,7 +37,7 @@ Baseline softmax-global form:
 - `g = softmax(g_raw)` (M,), `w_eff[m,l] = g[m] + w_delta[m,l]`
 
 Proposed change:
-- Add a learned scalar `s > 0`, e.g. parameterize via `log_s` and use `s = exp(log_s)` (or `softplus`).
+- Add a learned scalar `s > 0`, parameterized via `log_s` and use `s = exp(log_s)`.
 - Effective weights:
   - `w_eff[m,l] = s * g[m] + w_delta[m,l]`
 
@@ -49,25 +49,68 @@ Proposed change:
 
 ### Implementation
 
-- New script (recommended for controlled comparisons):
+- Script:
   - `benchmarks/torch_per_label_softmax_global_scale.py`
 - Model name written to scoreboard:
   - `torch_per_label_softmax_global_scale(<k1>,<k2>,<k3>)`
-- CLI: identical to `torch_per_label_softmax_global` (no new flags).
+- Training/eval:
+  - Same protocol as `torch_per_label` (BCEWithLogitsLoss + early stopping on train-subset NDCG@1000)
+  - Explicit L2 penalty on `w_delta` (module constant `LAMBDA_DELTA_L2 = 1e-3`)
+  - Same “best hyperparameters” as `torch_per_label` for comparability (lr=0.003, wd=0, bs=256)
 
-### Results (TODO)
+### Results
 
 Command:
 - `./regenerate_scoreboard.sh --models torch_per_label_softmax_global_scale`
 
-Best epoch selection:
-- TODO
+Early stopping (selected by best train-subset NDCG@1000):
+- `yso-fi`: best_epoch=4, train_ndcg@1000(subset)=0.818671
+- `yso-en`: best_epoch=11, train_ndcg@1000(subset)=0.818032
+- `koko`: best_epoch=2, train_ndcg@1000(subset)=0.561877
 
 Test metrics (best epoch per dataset):
-- TODO
+- `yso-fi`: NDCG@10=0.707331, NDCG@1000=0.814153, F1@5=0.542623
+- `yso-en`: NDCG@10=0.660923, NDCG@1000=0.775213, F1@5=0.472158
+- `koko`: NDCG@10=0.364180, NDCG@1000=0.476558, F1@5=0.266555
 
-### Analysis (TODO)
-- TODO
+Summary vs baseline `torch_per_label` (from current `SCOREBOARD.md`):
+- `yso-fi`: slightly worse across all three metrics
+  - ΔNDCG@10 = -0.002840 (0.707331 vs 0.710171)
+  - ΔNDCG@1000 = -0.002301 (0.814153 vs 0.816454)
+  - ΔF1@5 = -0.001509 (0.542623 vs 0.544132)
+- `yso-en`: better NDCG@10 / NDCG@1000, worse F1@5
+  - ΔNDCG@10 = +0.001696 (0.660923 vs 0.659227)
+  - ΔNDCG@1000 = +0.004134 (0.775213 vs 0.771079)
+  - ΔF1@5 = -0.001469 (0.472158 vs 0.473627)
+- `koko`: better across all three metrics
+  - ΔNDCG@10 = +0.002537 (0.364180 vs 0.361643)
+  - ΔNDCG@1000 = +0.002653 (0.476558 vs 0.473905)
+  - ΔF1@5 = +0.001828 (0.266555 vs 0.264727)
+
+Across-datasets aggregate:
+- This variant is currently **#1** by “Avg of 3 Test Metrics (across datasets)” in `SCOREBOARD.md`
+  (slightly ahead of `torch_per_label_softmax_global` and `torch_per_label`).
+
+### Analysis
+
+- The learned global scale `s` appears to help most where the pure softmax-global constraint is likely
+  too restrictive, and where per-label flexibility tends to overfit:
+  - Clear win on `koko` across all metrics, suggesting improved stability / calibration of the shared mixture.
+  - Noticeable deep-ranking improvement on `yso-en` NDCG@1000 (+0.0041), consistent with the “stabilize
+    the shared mixture, let residuals do the rest” hypothesis.
+- The small regression on `yso-fi` suggests either:
+  - the dataset-specific optimum is already well captured by unconstrained `torch_per_label`, or
+  - the combination `(s * softmax(g_raw)) + w_delta` with L2 shrinkage on `w_delta` is still slightly
+    too constrained for `yso-fi` (i.e., the best solution needs more per-label deviation than the current
+    delta penalty encourages).
+- The F1@5 tradeoff on `yso-en` (slightly down while NDCG improves) suggests this variant may be
+  marginally better at ordering/ranking quality than at top-5 threshold-ish behavior, which aligns with
+  the repo’s primary focus.
+- Next follow-ups (if pursuing further gains):
+  - Tune `LAMBDA_DELTA_L2` per dataset or via a small shared grid (e.g. 3e-4, 1e-3, 3e-3) to see whether
+    `yso-fi` can recover without losing the `koko` benefit.
+  - Consider anchoring `g` to init weights (Variant 2) to reduce drift and potentially improve `yso-fi`
+    while maintaining the strong cross-dataset average.
 
 ---
 
