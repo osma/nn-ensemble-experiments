@@ -55,10 +55,69 @@ more predictable optimization and better generalization.
 - Only change the final combination rule for active labels.
 
 ### Results
-_TBD_
+
+Run:
+- `./regenerate_scoreboard.sh --models torch_per_label_mlp_additive_delta`
+- Device: CPU
+- Early-stop criterion (stage 2): train subset NDCG@1000
+
+Best epoch selected by early stopping (stage 2):
+- `yso-fi`: epoch **1**
+  - Test: NDCG@10 **0.697128**, NDCG@1000 **0.805955**, F1@5 **0.534772**
+- `yso-en`: epoch **2**
+  - Test: NDCG@10 **0.650038**, NDCG@1000 **0.762893**, F1@5 **0.466016**
+- `koko`: epoch **1**
+  - Test: NDCG@10 **0.358676**, NDCG@1000 **0.460274**, F1@5 **0.264883**
+
+Comparison vs baseline `torch_per_label_mlp` (from current committed `SCOREBOARD.md`):
+
+- `yso-fi`:
+  - baseline MLP: NDCG@10 0.697123, NDCG@1000 0.806150, F1@5 0.534772
+  - additive:     NDCG@10 0.697128, NDCG@1000 0.805955, F1@5 0.534772
+  - Δ (additive - baseline): +0.000005, -0.000195, +0.000000
+
+- `yso-en`:
+  - baseline MLP: NDCG@10 0.650776, NDCG@1000 0.764912, F1@5 0.467200
+  - additive:     NDCG@10 0.650038, NDCG@1000 0.762893, F1@5 0.466016
+  - Δ (additive - baseline): -0.000738, -0.002019, -0.001184
+
+- `koko`:
+  - baseline MLP: NDCG@10 0.361286, NDCG@1000 0.474052, F1@5 0.266288
+  - additive:     NDCG@10 0.358676, NDCG@1000 0.460274, F1@5 0.264883
+  - Δ (additive - baseline): -0.002610, -0.013778, -0.001405
+
+Macro summary:
+- Essentially a **wash** on `yso-fi` (within ~2e-4 for NDCG@1000, identical F1@5).
+- Clear **regression** on `yso-en` and especially `koko`, dominated by the drop in NDCG@1000 on `koko`.
 
 ### Analysis
-_TBD_
+
+1. The additive update did *not* deliver the intended stability/generalization benefit in these runs.
+   On `koko`, the drop in NDCG@1000 is large relative to typical per-run jitter seen in the scoreboard,
+   suggesting the additive residual is harming long-tail ranking quality.
+
+2. Based on the debug stats from the run:
+   - The gate remains near its initialization (~0.02) and grows slowly, so the variant is still in a
+     “small residual” regime.
+   - Despite the small gate, the residual head’s raw delta distribution grows quickly on `yso-en`/`koko`
+     (std increases orders of magnitude by epoch 2–4), indicating the MLP can still learn fairly
+     aggressive (bounded) deltas even when the gate is small.
+
+3. Likely explanation for the regression:
+   - In the baseline multiplicative form, the residual scales with `base_active` magnitude, so it
+     naturally has less effect on near-zero logits and behaves more like a reweighting.
+   - In the additive form, the model can introduce a delta that is *not* tied to `base_active`, which may
+     make it easier to perturb low-confidence labels and degrade NDCG@1000 (where many more labels matter).
+
+4. Next steps (controlled):
+   - If we revisit additive deltas, try smaller `DELTA_CLAMP` (e.g. 0.2) or a lower `DELTA_GATE_MAX`
+     to constrain the additive pathway more strongly.
+   - Alternatively, keep additive but reintroduce a dependence on base magnitude (e.g. add `base_active`
+     as an explicit multiplicative feature to the delta, or scale `delta_active` by `tanh(base_active)`).
+
+Verdict:
+- Keep as a documented variant, but **not a candidate “best”**: it does not outperform the baseline MLP
+  and appears harmful on `koko` (NDCG@1000).
 
 ---
 
