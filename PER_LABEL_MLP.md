@@ -223,29 +223,97 @@ Verdict:
 
 **What changes:** make the gate **data-dependent** (per sample) instead of a single learned scalar.
 
-Example concept:
+Concept (as implemented in `benchmarks/torch_per_label_mlp_gate_per_sample.py`):
 
-- Compute a pooled summary from `feats[b, c, l_active]`, such as:
-  - `p[b, c] = mean_l feats[b, c, l]`
-- Feed through a tiny gating head (e.g. linear layer) to produce:
-  - `gate[b] = gate_max * sigmoid(gate_head(p[b]))`
-
-Then apply:
-- `out_active = base_active * (1 + gate[b] * delta_active)`
+- Pool stage-2 features over active labels:
+  - `p[b, c] = mean_l feats[b, c, l_active]`
+- Compute a per-sample bounded gate via a tiny head:
+  - `gate[b] = gate_max * sigmoid(linear(p[b]))`
+- Apply multiplicatively on active labels:
+  - `out_active = base_active * (1 + gate[b] * delta_active)`
 
 **Hypothesis:** cross-label “rules” may only be reliable for certain samples/documents. A per-sample
 gate can reduce harm by turning the residual down when signals are weak or noisy, protecting stage-1
 performance.
 
 ### Implementation notes
-- Keep the gating head very small (e.g. a single `nn.Linear`), so model size does not change dramatically.
-- Keep the same output bound via `sigmoid` and `DELTA_GATE_MAX`.
+- Implemented in: `benchmarks/torch_per_label_mlp_gate_per_sample.py`
+- Gate head is a single `nn.Linear(n_channels=4 -> 1)` with:
+  - weights initialized to 0
+  - bias initialized so `sigmoid(bias) = DELTA_GATE_INIT / DELTA_GATE_MAX`
+- Gate head is trained with **no weight decay**; residual MLP uses AdamW weight decay.
+- Keeps baseline safety constraints: tanh-bounded residual (`DELTA_CLAMP`) and per-sample centering of `delta_active`.
 
 ### Results
-_TBD_
+
+Run:
+- `./regenerate_scoreboard.sh --models torch_per_label_mlp_gate_per_sample`
+- Device: CPU
+- Early-stop criterion (stage 2): train subset NDCG@1000 (patience=2, min_epochs=2)
+
+Best epoch selected by early stopping (stage 2):
+- `yso-fi`: epoch **5**
+  - Test: NDCG@10 **0.697123**, NDCG@1000 **0.806152**, F1@5 **0.534772**
+- `yso-en`: epoch **1**
+  - Test: NDCG@10 **0.650776**, NDCG@1000 **0.764916**, F1@5 **0.467200**
+- `koko`: epoch **1**
+  - Test: NDCG@10 **0.361286**, NDCG@1000 **0.474100**, F1@5 **0.266266**
+
+Comparison vs baseline `torch_per_label_mlp` (from current committed `SCOREBOARD.md`):
+
+- `yso-fi`:
+  - baseline MLP: NDCG@10 0.697123, NDCG@1000 0.806150, F1@5 0.534772
+  - gate-per-sample: NDCG@10 0.697123, NDCG@1000 0.806152, F1@5 0.534772
+  - Δ: +0.000000, +0.000002, +0.000000
+
+- `yso-en`:
+  - baseline MLP: NDCG@10 0.650776, NDCG@1000 0.764912, F1@5 0.467200
+  - gate-per-sample: NDCG@10 0.650776, NDCG@1000 0.764916, F1@5 0.467200
+  - Δ: +0.000000, +0.000004, +0.000000
+
+- `koko`:
+  - baseline MLP: NDCG@10 0.361286, NDCG@1000 0.474052, F1@5 0.266288
+  - gate-per-sample: NDCG@10 0.361286, NDCG@1000 0.474100, F1@5 0.266266
+  - Δ: +0.000000, +0.000048, -0.000022
+
+Macro summary:
+- Effectively a **wash** relative to `torch_per_label_mlp` on all datasets in this run.
+- Tiny positive movement in NDCG@1000 on all three datasets (on the order of 1e-6 to 1e-4), with a tiny F1@5 decrease on `koko`.
+- Overall: this does **not** appear to be a meaningful improvement beyond normal run-to-run/caching precision, but it also does **not** show the `koko` NDCG@1000 regression seen in the gate-per-label variant.
 
 ### Analysis
-_TBD_
+
+1. The gate is *effectively constant* (not meaningfully data-dependent) in this run.
+   The epoch logs show:
+   - `yso-fi`: `gate mean ≈ 0.02`, `std ≈ 0` for most epochs (std only reaches ~1e-9 by epoch 6–7).
+   - `yso-en`: `gate mean ≈ 0.02`, `std = 0` (to printed precision) throughout.
+   - `koko`: `gate mean ≈ 0.02004 → 0.02133` by epoch 3, but still near-constant across the debug subset (tiny std).
+   This implies the linear gate head is learning mostly a **global bias shift**, not per-sample variation.
+
+2. Stage-2 updates remain extremely small on yso-* (net behavior ≈ no-op).
+   On `yso-fi` and `yso-en`, `gated_delta(mult term)` std stays in the ~1e-6 to 1e-5 range.
+   With the multiplicative combination rule, this produces almost no perturbation to rankings—consistent with
+   the scoreboard metrics being identical to baseline up to 1e-6.
+
+3. `koko` still shows “residual wants to turn on”, but early stopping protects quality.
+   For `koko`, by epoch 2–3:
+   - `delta` std jumps from ~0.002 to ~0.05 then ~0.14 (hitting/approaching the tanh clamp),
+   - hidden activations and fc2 weights grow quickly,
+   - and test NDCG@1000 drops (epoch 2: 0.468868; epoch 3: 0.463755) compared to epoch 1.
+   Early stopping (best epoch=1) effectively selects the **safe near-no-op snapshot**, preventing the degradation.
+
+4. Why the “per-sample gate” hypothesis wasn’t realized here:
+   - The pooling `mean_l feats[b, c, l]` can be dominated by many near-zero features (especially with sparse-ish inputs),
+     making it hard for a linear head to produce a wide dynamic range.
+   - Weight decay is disabled for the gate head, but the residual head can still create large deltas; the easiest way for
+     optimization to remain stable is to keep the gate near its initialization.
+   - With `DELTA_GATE_MAX=0.2` and init at `0.02`, the model is biased toward “small residual”; it may require a stronger
+     learning signal or different pooling (e.g. mean of |feats|, max, or a learned pooling) to become meaningfully conditional.
+
+Verdict:
+- Safe and essentially equivalent to baseline `torch_per_label_mlp` in these runs.
+- Not a clear candidate for “best”, but a useful confirmation that making the gate data-dependent (with this simple linear pooling head)
+  does **not** automatically improve results—and that `koko` remains sensitive to stage-2 capacity after the first epoch.
 
 ---
 
