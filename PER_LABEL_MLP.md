@@ -337,10 +337,80 @@ learning rate, and mitigate “early peak then degrade” behavior.
 - No other changes vs the baseline `torch_per_label_mlp`.
 
 ### Results
-_TBD_
+
+Run:
+- `./regenerate_scoreboard.sh --models torch_per_label_mlp_layernorm_feats`
+- Device: CPU
+- Early-stop criterion (stage 2): train subset NDCG@1000 (patience=2, min_epochs=2)
+
+Best epoch selected by early stopping (stage 2):
+- `yso-fi`: epoch **1**
+  - Test: NDCG@10 **0.697001**, NDCG@1000 **0.805845**, F1@5 **0.534772**
+- `yso-en`: epoch **1**
+  - Test: NDCG@10 **0.650211**, NDCG@1000 **0.763108**, F1@5 **0.466447**
+- `koko`: epoch **1**
+  - Test: NDCG@10 **0.361464**, NDCG@1000 **0.461302**, F1@5 **0.266139**
+
+Comparison vs baseline `torch_per_label_mlp` (from current committed `SCOREBOARD.md`):
+
+- `yso-fi`:
+  - baseline MLP: NDCG@10 0.697123, NDCG@1000 0.806150, F1@5 0.534772
+  - layernorm-feats: NDCG@10 0.697001, NDCG@1000 0.805845, F1@5 0.534772
+  - Δ (layernorm - baseline): -0.000122, -0.000305, +0.000000
+
+- `yso-en`:
+  - baseline MLP: NDCG@10 0.650776, NDCG@1000 0.764912, F1@5 0.467200
+  - layernorm-feats: NDCG@10 0.650211, NDCG@1000 0.763108, F1@5 0.466447
+  - Δ (layernorm - baseline): -0.000565, -0.001804, -0.000753
+
+- `koko`:
+  - baseline MLP: NDCG@10 0.361286, NDCG@1000 0.474052, F1@5 0.266288
+  - layernorm-feats: NDCG@10 0.361464, NDCG@1000 0.461302, F1@5 0.266139
+  - Δ (layernorm - baseline): +0.000178, -0.012750, -0.000149
+
+Macro summary:
+- Overall a **regression** vs baseline, dominated by **NDCG@1000 drops** on `koko` and `yso-en`.
+- `yso-fi` is essentially unchanged/slightly worse on NDCG, identical F1@5.
 
 ### Analysis
-_TBD_
+
+1. The intended “stabilize stage-2 optimization” effect did not translate into better test ranking.
+   In all three datasets, the best snapshot by early stopping was **epoch 1** of stage 2, and metrics
+   were already slightly below the baseline MLP for `yso-*`, with a large regression in `koko` NDCG@1000.
+
+2. LayerNorm appears to make it easier for the residual to produce large deltas very quickly.
+   The debug logs show a pattern consistent with “fast ramp-up” of the residual head:
+   - `yso-fi`: delta std grows from ~0.003 (epoch 1) to ~0.036 (epoch 2) to ~0.116 (epoch 3).
+   - `yso-en`: delta std grows from ~0.009 (epoch 1) to ~0.091 (epoch 2) to ~0.185 (epoch 3).
+   - `koko`: delta std is already large at epoch 1 (~0.217) and remains high (~0.23–0.24).
+   Even with a small gate (~0.02), these deltas are large enough to perturb many ranks once multiplied by
+   `base_active` in the multiplicative form, which is consistent with degraded NDCG@1000.
+
+3. The regression is most pronounced on `koko` long-tail ranking (NDCG@1000).
+   `koko` drops from **0.474052 → 0.461302** at the stage-2 best epoch.
+   This matches a repeated theme in other variants: stage-2 capacity tends to hurt the long tail on `koko`
+   unless it remains a near-no-op.
+
+4. Why LayerNorm-over-flattened-features may be counterproductive here:
+   - It removes per-feature scale information across the entire `(C * L_active)` vector. With many active
+     labels, this can amplify small but widespread signals and reduce the “natural” dominance of strong
+     base logits for a subset of labels.
+   - It also couples all active labels through a shared normalization statistic per sample, potentially
+     introducing cross-label interactions *before* the MLP itself—exactly where we are trying to be cautious.
+   - Given inputs include stage-1 logits plus log1p predictor features, a global LN may encourage the MLP
+     to use relative deviations across the whole active set, which can overfit and degrade NDCG@1000.
+
+5. Practical takeaway / next iteration:
+   - Keep this as a documented variant, but it is **not a “best candidate”** given the measured regressions.
+   - If normalization is revisited, prefer more local/structured options that don’t mix all labels:
+     - normalize per-channel across labels (e.g. `LayerNorm` over the `L_active` dimension per channel),
+       or
+     - standardize only the stage-1 logit channel, or
+     - reduce `DELTA_CLAMP` / `DELTA_GATE_MAX` specifically for `koko`.
+
+Verdict:
+- **Not recommended** as a replacement for `torch_per_label_mlp` due to consistent regressions in
+  NDCG@1000 (especially `koko`).
 
 ---
 
