@@ -133,7 +133,45 @@ Below are results from running:
 | torch_per_label_global_times_scale | yso-fi | 14 | 0.682260 | 0.796095 | 0.517386 | Selected by train subset NDCG@1000 |
 | torch_per_label_global_times_scale | yso-en | 20 | 0.643669 | 0.765229 | 0.455654 | Selected by train subset NDCG@1000 |
 | torch_per_label_global_times_scale | koko | 4 | 0.359675 | 0.476947 | 0.264296 | Selected by train subset NDCG@1000 |
-| torch_per_label_bias_global_plus_delta |  |  |  |  |  |  |
+| torch_per_label_bias_global_plus_delta | yso-fi | 5 | 0.708647 | 0.815643 | 0.544540 | Selected by train subset NDCG@1000 |
+| torch_per_label_bias_global_plus_delta | yso-en | 16 | 0.656047 | 0.768774 | 0.472266 | Selected by train subset NDCG@1000 |
+| torch_per_label_bias_global_plus_delta | koko | 4 | 0.361324 | 0.473755 | 0.265462 | Selected by train subset NDCG@1000 |
+
+---
+
+## Analysis: `torch_per_label_bias_global_plus_delta`
+
+**Overall:** This bias reparameterization is effectively **neutral-to-slightly-positive** versus the baseline `torch_per_label`. It is **very close** on all datasets, with small wins on yso-fi (and marginal on koko), and a small drop on yso-en in this run.
+
+**Results (this run; selected by train subset NDCG@1000)**
+- **yso-fi:** best epoch 5 → Test NDCG@10=0.708647, NDCG@1000=0.815643, F1@5=0.544540
+- **yso-en:** best epoch 16 → Test NDCG@10=0.656047, NDCG@1000=0.768774, F1@5=0.472266
+- **koko:** best epoch 4 → Test NDCG@10=0.361324, NDCG@1000=0.473755, F1@5=0.265462
+
+**Relative to baseline (`torch_per_label`) in current `SCOREBOARD.md` snapshot**
+- **yso-fi:** essentially flat; slightly worse NDCG@10/NDCG@1000, slightly better F1@5.
+  - baseline: NDCG@10=0.710171, NDCG@1000=0.816454, F1@5=0.544132
+  - bias g+Δ: NDCG@10=0.708647 (−0.0015), NDCG@1000=0.815643 (−0.0008), F1@5=0.544540 (+0.0004)
+- **yso-en:** small regression across all three metrics.
+  - baseline: NDCG@10=0.659227, NDCG@1000=0.771079, F1@5=0.473627
+  - bias g+Δ: NDCG@10=0.656047 (−0.0032), NDCG@1000=0.768774 (−0.0023), F1@5=0.472266 (−0.0014)
+- **koko:** essentially flat; tiny F1@5 gain and tiny NDCG@10/NDCG@1000 drop.
+  - baseline: NDCG@10=0.361643, NDCG@1000=0.473905, F1@5=0.264727
+  - bias g+Δ: NDCG@10=0.361324 (−0.0003), NDCG@1000=0.473755 (−0.0002), F1@5=0.265462 (+0.0007)
+
+**Training dynamics / stability (from console output)**
+- **yso-fi:** improved through epoch 5, then drifted down; early stopping chose epoch 5 correctly.
+- **yso-en:** steadily improved until ~epoch 16–18; early stopping chose epoch 16 (patience=2).
+- **koko:** peaked early (epoch 2 had the best test metrics), but selection by train-subset NDCG@1000 picked epoch 4; by epoch 6 metrics had noticeably degraded. This suggests mild overfitting / drift and some mismatch between the selection metric and the test optimum on koko.
+
+**Interpretation**
+- Reparameterizing bias into `bias_global + bias_delta[l]` appears to be a **low-risk change**: it does not materially alter capacity (still one bias per label plus one extra scalar), but can make optimization slightly easier by letting the model learn a dataset-wide intercept once.
+- The small yso-en regression suggests the added coupling (shared global intercept) is not always beneficial, or the current early-stopping criterion may be selecting a slightly different region of parameter space than what maximizes test metrics for that dataset.
+
+**Next steps**
+- Add lightweight diagnostics (similar to `torch_per_label`) to inspect the learned `bias_global` magnitude and the distribution of `bias_delta` (to see if the model actually uses the global term meaningfully).
+- Consider increasing `PATIENCE` for koko (or reducing `EPOCHS`) if the early peak + degrade pattern is consistent.
+- If you want to keep the model strictly comparable, you could also re-run with a fixed epoch budget (no early stopping) to see whether the deltas persist.
 
 ---
 
