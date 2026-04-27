@@ -433,14 +433,85 @@ bottleneck can reduce overfitting, encourage shared structure, and improve gener
 keeping the model size in the same ballpark.
 
 ### Implementation notes
-- Choose `r` so that the parameter count stays comparable to baseline.
-- Keep initialization such that the final effective projection starts near zero (near-no-op).
+- Implemented in: `benchmarks/torch_per_label_mlp_rank_bottleneck.py`
+- This run used `RANK_BOTTLENECK=32`.
+- Initialization policy matches the baseline safety goal: `fc2b` is zero-initialized so the stage-2
+  residual starts as (near) a no-op, then can “turn on” through training.
 
 ### Results
-_TBD_
+
+Run:
+- `./regenerate_scoreboard.sh --models torch_per_label_mlp_rank_bottleneck`
+- Device: CPU
+- Early-stop criterion (stage 2): train subset NDCG@1000 (patience=2, min_epochs=2)
+
+Best epoch selected by early stopping (stage 2):
+- `yso-fi`: epoch **4**
+  - Test: NDCG@10 **0.697123**, NDCG@1000 **0.806153**, F1@5 **0.534772**
+- `yso-en`: epoch **4**
+  - Test: NDCG@10 **0.650776**, NDCG@1000 **0.764786**, F1@5 **0.467200**
+- `koko`: epoch **4**
+  - Test: NDCG@10 **0.360948**, NDCG@1000 **0.470921**, F1@5 **0.266199**
+
+Comparison vs baseline `torch_per_label_mlp` (from current committed `SCOREBOARD.md`):
+
+- `yso-fi`:
+  - baseline MLP: NDCG@10 0.697123, NDCG@1000 0.806150, F1@5 0.534772
+  - rank-bottleneck: NDCG@10 0.697123, NDCG@1000 0.806153, F1@5 0.534772
+  - Δ (rank - baseline): +0.000000, +0.000003, +0.000000
+
+- `yso-en`:
+  - baseline MLP: NDCG@10 0.650776, NDCG@1000 0.764912, F1@5 0.467200
+  - rank-bottleneck: NDCG@10 0.650776, NDCG@1000 0.764786, F1@5 0.467200
+  - Δ (rank - baseline): +0.000000, -0.000126, +0.000000
+
+- `koko`:
+  - baseline MLP: NDCG@10 0.361286, NDCG@1000 0.474052, F1@5 0.266288
+  - rank-bottleneck: NDCG@10 0.360948, NDCG@1000 0.470921, F1@5 0.266199
+  - Δ (rank - baseline): -0.000338, -0.003131, -0.000089
+
+Macro summary:
+- Essentially a **wash** on `yso-fi` (slight +3e-6 in NDCG@1000).
+- Slight **regression** on `yso-en` (−1.26e-4 in NDCG@1000; other metrics unchanged to 6 decimals).
+- Clearer **regression** on `koko`, dominated by the drop in **NDCG@1000** (−0.003131).
 
 ### Analysis
-_TBD_
+
+1. **The bottleneck did not produce a meaningful generalization gain.**
+   The measured changes on `yso-*` are at or below typical scoreboard-level jitter (1e-4-ish), and
+   `koko` regresses in the long tail (NDCG@1000).
+
+2. **Stage 2 remains mostly “near-no-op” on yso-* (which is consistent with identical metrics).**
+   Debug stats show `delta(tanh-bounded, centered)` std stays very small on yso-fi/yso-en:
+   - `yso-fi`: std grows from ~4e-5 → ~2.6e-4 over epochs 1→6
+   - `yso-en`: std grows from ~8e-5 → ~1.1e-3 over epochs 1→6
+   With `gate ≈ 0.02`, the effective multiplicative term `gate * delta` is tiny (std in the ~1e-6 → 2e-5 range),
+   so rankings barely change. This also suggests the rank bottleneck is not being “used” strongly on yso-*.
+
+3. **On `koko`, stage 2 “turns on” and still harms NDCG@1000 despite the low-rank constraint.**
+   The bottleneck reduces degrees of freedom, but the residual can still become large:
+   - `koko` delta std jumps from ~3.6e-4 (epoch 1) → ~0.0047 (epoch 3) → ~0.0356 (epoch 4),
+     and continues increasing afterward.
+   - Correspondingly, `gate * delta` grows to std ~7.4e-4 by epoch 4.
+   Even with a rank-32 output subspace, this is enough to perturb many low-ranked labels and reduce
+   NDCG@1000.
+
+4. **Early stopping picked epoch 4 for all datasets, but that doesn’t imply “stage 2 helps.”**
+   On yso-*, the selected snapshot is effectively equivalent to base performance.
+   On `koko`, epoch 4 is already worse than the baseline MLP row, indicating that (for this dataset)
+   the rank bottleneck alone is not sufficient to keep stage 2 safely beneficial.
+
+5. **Practical takeaway / next iteration ideas (controlled):**
+   - If we keep exploring the bottleneck idea, consider pairing it with *stronger safety constraints*
+     specifically for `koko`, e.g. lower `DELTA_CLAMP` (0.2) and/or lower `DELTA_GATE_MAX` (0.1),
+     or add a small explicit penalty on `fc2b`/delta magnitude.
+   - Alternatively, keep the bottleneck but switch to the **per-sample gate** (Variant 3) to make it
+     easier for early stopping to select a “residual off” snapshot on `koko`.
+
+Verdict:
+- Keep as a documented variant.
+- Not a clear improvement over baseline `torch_per_label_mlp`; shows a small-to-moderate `koko`
+  long-tail regression (NDCG@1000).
 
 ---
 
