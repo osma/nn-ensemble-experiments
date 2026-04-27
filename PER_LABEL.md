@@ -130,8 +130,55 @@ Below are results from running:
 | torch_per_label_softmax_global | yso-fi | 4 | 0.704736 | 0.813194 | 0.540867 | Selected by train subset NDCG@1000 |
 | torch_per_label_softmax_global | yso-en | 14 | 0.661455 | 0.776412 | 0.474309 | Selected by train subset NDCG@1000 |
 | torch_per_label_softmax_global | koko | 3 | 0.363673 | 0.477691 | 0.266434 | Selected by train subset NDCG@1000 |
-| torch_per_label_global_times_scale |  |  |  |  |  |  |
+| torch_per_label_global_times_scale | yso-fi | 14 | 0.682260 | 0.796095 | 0.517386 | Selected by train subset NDCG@1000 |
+| torch_per_label_global_times_scale | yso-en | 20 | 0.643669 | 0.765229 | 0.455654 | Selected by train subset NDCG@1000 |
+| torch_per_label_global_times_scale | koko | 4 | 0.359675 | 0.476947 | 0.264296 | Selected by train subset NDCG@1000 |
 | torch_per_label_bias_global_plus_delta |  |  |  |  |  |  |
+
+---
+
+## Analysis: `torch_per_label_global_times_scale`
+
+**Overall:** `torch_per_label_global_times_scale` is competitive but does **not** beat the baseline `torch_per_label` or the stronger `torch_per_label_softmax_global` in this scoreboard snapshot. It is closest on `koko`, where it slightly improves NDCG@1000 but is essentially flat/slightly worse on NDCG@10 and F1@5.
+
+**Relative to baseline (`torch_per_label`)**
+- **yso-fi:** worse across all three test metrics.
+  - baseline: NDCG@10=0.710171, NDCG@1000=0.816454, F1@5=0.544132
+  - global×scale: NDCG@10=0.682260, NDCG@1000=0.796095, F1@5=0.517386
+  - deltas: -0.0279 NDCG@10, -0.0204 NDCG@1000, -0.0267 F1@5
+- **yso-en:** worse across all three test metrics.
+  - baseline: NDCG@10=0.659227, NDCG@1000=0.771079, F1@5=0.473627
+  - global×scale: NDCG@10=0.643669, NDCG@1000=0.765229, F1@5=0.455654
+  - deltas: -0.0156 NDCG@10, -0.0059 NDCG@1000, -0.0180 F1@5
+- **koko:** mixed; slightly lower NDCG@10/F1@5 but higher NDCG@1000.
+  - baseline: NDCG@10=0.361643, NDCG@1000=0.473905, F1@5=0.264727
+  - global×scale: NDCG@10=0.359675, NDCG@1000=0.476947, F1@5=0.264296
+  - deltas: -0.0020 NDCG@10, +0.0030 NDCG@1000, -0.0004 F1@5
+
+**Relative to `torch_per_label_softmax_global`**
+- **yso-fi:** worse across all three test metrics.
+  - softmax_global: NDCG@10=0.704736, NDCG@1000=0.813194, F1@5=0.540867
+  - global×scale:  NDCG@10=0.682260, NDCG@1000=0.796095, F1@5=0.517386
+- **yso-en:** worse across all three test metrics.
+  - softmax_global: NDCG@10=0.661455, NDCG@1000=0.776412, F1@5=0.474309
+  - global×scale:  NDCG@10=0.643669, NDCG@1000=0.765229, F1@5=0.455654
+- **koko:** slightly worse overall (very close).
+  - softmax_global: NDCG@10=0.363673, NDCG@1000=0.477691, F1@5=0.266434
+  - global×scale:  NDCG@10=0.359675, NDCG@1000=0.476947, F1@5=0.264296
+
+**Training dynamics / stability (from console output)**
+- **yso-fi:** improved up to epoch 14 (selected), then plateau/slight drift; early stopping triggered at epoch 16 (patience=2).
+- **yso-en:** best epoch was the final epoch (20); train-subset NDCG@1000 improved steadily, so early stopping did not trigger.
+- **koko:** peaked early at epoch 4 and then degraded, consistent with faster overfitting on `koko`.
+
+**Interpretation**
+- The multiplicative form (`w_eff = g * scale`, with `g = softmax(g_raw)` and bounded `scale ∈ (0,2)`) stabilizes optimization but may be **too restrictive**: it cannot fully change the “mixture direction” per label the way additive deltas can, only rescale each model’s contribution around the global simplex weights.
+- The softmax constraint likely helps stability, but removing the ability to use negative global weights and limiting per-label deviation amplitude can reduce peak ranking performance.
+
+**Next steps**
+- Add a learned global scalar `s` so `w_eff = s * g * scale` (restores overall scale freedom while keeping a stable simplex mixture).
+- Consider widening the scale family: `scale = exp(scale_raw)` with clamping (e.g. `[0.25, 4]`) to allow stronger per-label deviations while staying positive.
+- Add diagnostics similar to `torch_per_label` to confirm whether `scale` collapses near 1 or saturates at bounds, and whether `g` stays close to dataset init weights.
 
 ---
 
