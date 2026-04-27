@@ -321,18 +321,20 @@ Verdict:
 
 **What changes:** add **normalization** to stage-2 features before the MLP.
 
-Options (choose one in implementation to keep it controlled):
-- `LayerNorm` over the flattened feature vector per sample
-- Or `LayerNorm` over the channel dimension after pooling
-- Or normalize per channel across the active labels
+Selected option (implemented):
+- `LayerNorm` over the **flattened feature vector per sample** (shape `(C * L_active,)`),
+  applied right after `Flatten(feats)` and before `fc1`.
 
 **Hypothesis:** stage-2 inputs mix log1p base scores and stage-1 logits, which can have different
 scales and distributions. Normalizing features can stabilize optimization, reduce sensitivity to
 learning rate, and mitigate “early peak then degrade” behavior.
 
 ### Implementation notes
-- Keep normalization lightweight (LayerNorm has a small parameter count).
-- Do not change the residual head architecture otherwise.
+- Implemented in: `benchmarks/torch_per_label_mlp_layernorm_feats.py`
+- `LayerNorm(..., elementwise_affine=True)` (affine parameters enabled).
+- If `n_active == 0`, the residual head uses `nn.Identity()` as a safe no-op in place of `LayerNorm`
+  (since LayerNorm requires a positive normalized shape).
+- No other changes vs the baseline `torch_per_label_mlp`.
 
 ### Results
 _TBD_
