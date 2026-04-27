@@ -50,6 +50,7 @@ ineffective when `base_active ≈ 0`. An additive residual is the standard resid
 more predictable optimization and better generalization.
 
 ### Implementation notes
+- Implemented in: `benchmarks/torch_per_label_mlp_additive_delta.py`
 - Keep the same `delta_active` computation (tanh bound + centering) and the same scalar gate.
 - Only change the final combination rule for active labels.
 
