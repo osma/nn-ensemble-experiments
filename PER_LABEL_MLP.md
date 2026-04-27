@@ -143,12 +143,79 @@ small and bounded.
 ### Implementation notes
 - Adds `n_active` parameters (small compared to MLP weights).
 - Keep the same gate bounds (`DELTA_GATE_MAX`) and initialization policy, but applied per label.
+- Implemented in: `benchmarks/torch_per_label_mlp_gate_per_label.py`
 
 ### Results
-_TBD_
+
+Run:
+- `./regenerate_scoreboard.sh --models torch_per_label_mlp_gate_per_label`
+- Device: CPU
+- Early-stop criterion (stage 2): train subset NDCG@1000 (patience=2, min_epochs=2)
+
+Best epoch selected by early stopping (stage 2):
+- `yso-fi`: epoch **6**
+  - Test: NDCG@10 **0.697123**, NDCG@1000 **0.806150**, F1@5 **0.534772**
+- `yso-en`: epoch **1**
+  - Test: NDCG@10 **0.650776**, NDCG@1000 **0.764912**, F1@5 **0.467200**
+- `koko`: epoch **3**
+  - Test: NDCG@10 **0.361536**, NDCG@1000 **0.465728**, F1@5 **0.266017**
+
+Comparison vs baseline `torch_per_label_mlp` (from current committed `SCOREBOARD.md`):
+
+- `yso-fi`:
+  - baseline MLP: NDCG@10 0.697123, NDCG@1000 0.806150, F1@5 0.534772
+  - gate-per-label: NDCG@10 0.697123, NDCG@1000 0.806150, F1@5 0.534772
+  - Δ: +0.000000, +0.000000, +0.000000
+
+- `yso-en`:
+  - baseline MLP: NDCG@10 0.650776, NDCG@1000 0.764912, F1@5 0.467200
+  - gate-per-label: NDCG@10 0.650776, NDCG@1000 0.764912, F1@5 0.467200
+  - Δ: +0.000000, +0.000000, +0.000000
+
+- `koko`:
+  - baseline MLP: NDCG@10 0.361286, NDCG@1000 0.474052, F1@5 0.266288
+  - gate-per-label: NDCG@10 0.361536, NDCG@1000 0.465728, F1@5 0.266017
+  - Δ: +0.000250, -0.008324, -0.000271
+
+Macro summary:
+- This variant is effectively **identical** to the baseline `torch_per_label_mlp` on `yso-fi` and `yso-en`.
+- On `koko`, it is a **regression** driven by a notable drop in **NDCG@1000**.
 
 ### Analysis
-_TBD_
+
+1. **Per-label gates did not “turn on” meaningfully on yso-*.**
+   In the debug output, `gate_vec` stayed extremely close to its initialization (~0.02) for both `yso-fi`
+   and `yso-en` across epochs (std on the order of 1e-8 to 1e-7). That implies stage 2 remained almost
+   uniformly “on at the same small level” for all active labels, behaving very similarly to the scalar-gate
+   baseline.
+
+2. **The residual head learned extremely small deltas on yso-*; net effect remained negligible.**
+   For `yso-fi` and `yso-en`, `delta(tanh-bounded, centered)` standard deviations were tiny (1e-4-ish),
+   and `gated_delta(mult)` standard deviations were even smaller (1e-6-ish). With the multiplicative
+   combination rule, this results in almost no change to base logits/rankings—consistent with the identical
+   scoreboard metrics.
+
+3. **On `koko`, the residual “turned on” aggressively and appears to harm long-tail ranking.**
+   Unlike yso-*, `koko` quickly exhibited large residual activations and deltas:
+   - `delta` std grew from ~0.002 (epoch 1) to ~0.26–0.43 (epoch 3–5), hitting the tanh clamp range.
+   - Hidden activations (`h1`) and parameter magnitudes (`fc2.w`) grew rapidly.
+   Even though `gate_vec` means remained near ~0.02, it also developed more spread and drift.
+   The net result is a measurable drop in NDCG@1000, suggesting the residual perturbed many low-ranked labels
+   (exactly what NDCG@1000 is sensitive to).
+
+4. **Why this likely happens: “capacity where it’s least safe.”**
+   The per-label gate adds degrees of freedom, but (as implemented) it’s *not conditioned on per-label
+   reliability signals* and is not regularized beyond the sigmoid bound. For `koko` (with far fewer active
+   labels and different base-model sparsity patterns), the residual head can learn broad cross-label patterns
+   that overfit and degrade the long tail.
+
+Verdict:
+- Not a clear improvement over the baseline `torch_per_label_mlp`.
+- Safe/no-op on yso-* in this run, but **harmful on `koko` (NDCG@1000 regression)**.
+- Keep as a documented variant; if revisited, consider adding either:
+  - stronger regularization on `raw_delta_gate` (e.g. L2 toward its init), or
+  - a data-dependent gate (see Variant 3), or
+  - tighter `DELTA_CLAMP` / lower `DELTA_GATE_MAX` specifically for `koko`.
 
 ---
 
