@@ -525,16 +525,97 @@ Verdict:
   - no centering
 
 **Hypothesis:** centering forces the residual to be “redistributive” among active labels only. This
-may be too restrictive: in some cases, a uniform shift (or broad boost/suppression) of active labels
+may be too restrictive: in some cases, a uniform shift (or broad boost/suppression) of active logits
 could help separate active vs inactive labels. Removing centering tests whether the constraint is
 helpful regularization or an unnecessary limitation.
 
 ### Implementation notes
 - Keep tanh bounding and gating identical.
 - Only remove the mean-subtraction step.
+- Combination rule remains the baseline multiplicative form:
+  - `out_active = base_active * (1 + gate * delta_active)`
 
 ### Results
-_TBD_
+
+Run:
+- `./regenerate_scoreboard.sh --models torch_per_label_mlp_remove_centering`
+- Device: CPU
+- Early-stop criterion (stage 2): train subset NDCG@1000 (patience=2, min_epochs=2)
+
+Best epoch selected by early stopping (stage 2):
+- `yso-fi`: epoch **1**
+  - Test: NDCG@10 **0.697123**, NDCG@1000 **0.793181**, F1@5 **0.534772**
+- `yso-en`: epoch **1**
+  - Test: NDCG@10 **0.650776**, NDCG@1000 **0.737115**, F1@5 **0.467200**
+- `koko`: epoch **1**
+  - Test: NDCG@10 **0.361142**, NDCG@1000 **0.410901**, F1@5 **0.266119**
+
+Comparison vs baseline `torch_per_label_mlp` (from current committed `SCOREBOARD.md`):
+
+- `yso-fi`:
+  - baseline MLP: NDCG@10 0.697123, NDCG@1000 0.806150, F1@5 0.534772
+  - remove-centering: NDCG@10 0.697123, NDCG@1000 0.793181, F1@5 0.534772
+  - Δ (remove-centering - baseline): +0.000000, **-0.012969**, +0.000000
+
+- `yso-en`:
+  - baseline MLP: NDCG@10 0.650776, NDCG@1000 0.764912, F1@5 0.467200
+  - remove-centering: NDCG@10 0.650776, NDCG@1000 0.737115, F1@5 0.467200
+  - Δ (remove-centering - baseline): +0.000000, **-0.027797**, +0.000000
+
+- `koko`:
+  - baseline MLP: NDCG@10 0.361286, NDCG@1000 0.474052, F1@5 0.266288
+  - remove-centering: NDCG@10 0.361142, NDCG@1000 0.410901, F1@5 0.266119
+  - Δ (remove-centering - baseline): -0.000144, **-0.063151**, -0.000169
+
+Macro summary:
+- **Severe regression** in long-tail ranking quality (**NDCG@1000**) on *all* datasets.
+- NDCG@10 and F1@5 remain essentially unchanged (to 6 decimals), but that is misleading: the variant
+  catastrophically harms the long tail without materially affecting the very top of the ranking.
 
 ### Analysis
-_TBD_
+
+1. The no-centering variant collapsed to a degenerate residual: `delta_active ≈ +DELTA_CLAMP` everywhere.
+   In the epoch logs on all datasets, the debug stats show:
+   - `delta(tanh-bounded, NOT centered): mean=0.5 std≈0 min=0.5 max=0.5`
+   With `DELTA_CLAMP=0.5`, this means the tanh-bounded residual saturates at the positive clamp for
+   (almost) every (sample, active-label) pair. In other words, stage 2 did *not* learn meaningful
+   per-label redistributions; it learned a near-constant positive boost signal.
+
+2. In the multiplicative combination rule, a constant positive delta is equivalent to scaling active logits upward.
+   Since:
+   - `out_active = base_active * (1 + gate * delta_active)`
+   and here `delta_active ≈ 0.5`, `gate ≈ 0.02`, we get:
+   - `1 + gate * delta_active ≈ 1 + 0.01 = 1.01`
+   So stage 2 effectively applies a uniform ~+1% scaling to *all* active-label logits.
+
+3. Uniform scaling of logits should preserve ranking order within the active set, so why does NDCG@1000 collapse?
+   The key is that `active_idx` includes labels that are active in **either** train truth **or any base prediction**.
+   For yso-fi/yso-en this is ~80–86% of all labels; for koko it is ~32% (~19k labels). A uniform rescaling applied
+   to a huge portion of the label space changes the relative ordering between:
+   - labels that were previously just below the top-k cutoff vs just above it,
+   - active vs inactive-label blocks (inactive labels remain unscaled at base logits),
+   - and, critically for NDCG@1000, the tail of the ranking where small perturbations affect many positions.
+   Even when the transform is monotone within the active block, it can reshuffle many cross-block comparisons.
+
+4. The empirical outcome matches that expectation: NDCG@10 and F1@5 barely move, but NDCG@1000 drops sharply.
+   NDCG@10 depends on the top of the ranking and is relatively robust to small global scaling effects (especially if
+   the top-ranked labels are already mostly within the active block). NDCG@1000 is far more sensitive because it
+   evaluates a much larger portion of the label ranking, where the cross-block perturbation affects many labels.
+
+5. Why removing centering likely causes this failure mode:
+   - With centering, the residual is forced to have zero mean per sample, preventing an easy “push everything up”
+     solution; the MLP must learn redistributive patterns to improve the early-stop metric.
+   - Without centering, the optimization can exploit the tanh clamp + multiplicative form by driving the residual
+     to a constant sign (here positive), which is a low-effort direction in parameter space and can increase/decrease
+     the BCE loss without learning any cross-label structure.
+   - In this run, it appears the model rapidly found that saturated constant solution and then effectively stopped
+     changing metrics (train subset NDCG@1000 stayed flat across epochs).
+
+Verdict:
+- This variant is **not viable** in its current form; removing centering produces a degenerate residual and causes a
+  large NDCG@1000 regression across all datasets.
+- If revisited, it would need additional constraints to prevent constant shifts, such as:
+  - reintroducing centering, or
+  - adding an explicit penalty on `mean(delta_active)` per sample, or
+  - switching to an additive residual form *plus* a constraint/regularizer on the mean delta, or
+  - redefining `active_idx` more conservatively (e.g. truth-only) to reduce cross-block effects.
