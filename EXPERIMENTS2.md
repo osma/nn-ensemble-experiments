@@ -134,26 +134,69 @@ Add regularization term:
 
 ### Implementation
 
-- New script:
+- Script:
   - `benchmarks/torch_per_label_softmax_global_l2_anchor.py`
 - Model name:
   - `torch_per_label_softmax_global_l2_anchor(<k1>,<k2>,<k3>)`
-- Notes:
-  - Keep `lambda_global` as a module-level constant for controlled comparison.
+- Training/eval:
+  - Same protocol as `torch_per_label` (BCEWithLogitsLoss + early stopping on train-subset NDCG@1000)
+  - Explicit L2 penalty on `w_delta` (module constant `LAMBDA_DELTA_L2 = 1e-3`)
+  - Explicit L2 anchor penalty on `g` vs `g0` (module constant `LAMBDA_GLOBAL_L2 = 1e-2`)
+  - Same “best hyperparameters” as `torch_per_label` for comparability (lr=0.003, wd=0, bs=256)
 
-### Results (TODO)
+### Results
 
 Command:
 - `./regenerate_scoreboard.sh --models torch_per_label_softmax_global_l2_anchor`
 
-Best epoch selection:
-- TODO
+Early stopping (selected by best train-subset NDCG@1000):
+- `yso-fi`: best_epoch=5, train_ndcg@1000(subset)=0.820267
+- `yso-en`: best_epoch=12, train_ndcg@1000(subset)=0.817255
+- `koko`: best_epoch=3, train_ndcg@1000(subset)=0.561689
 
-Test metrics:
-- TODO
+Test metrics (best epoch per dataset):
+- `yso-fi`: NDCG@10=0.709872, NDCG@1000=0.816324, F1@5=0.543588
+- `yso-en`: NDCG@10=0.652481, NDCG@1000=0.769640, F1@5=0.465023
+- `koko`: NDCG@10=0.361812, NDCG@1000=0.474325, F1@5=0.264873
 
-### Analysis (TODO)
-- TODO
+Summary vs baseline `torch_per_label` (from current `SCOREBOARD.md`):
+- `yso-fi`: very slightly worse NDCG@10 / NDCG@1000 / F1@5
+  - ΔNDCG@10 = -0.000299 (0.709872 vs 0.710171)
+  - ΔNDCG@1000 = -0.000130 (0.816324 vs 0.816454)
+  - ΔF1@5 = -0.000544 (0.543588 vs 0.544132)
+- `yso-en`: substantially worse across all three metrics
+  - ΔNDCG@10 = -0.006746 (0.652481 vs 0.659227)
+  - ΔNDCG@1000 = -0.001439 (0.769640 vs 0.771079)
+  - ΔF1@5 = -0.008604 (0.465023 vs 0.473627)
+- `koko`: slightly worse across all three metrics
+  - ΔNDCG@10 = +0.000169 (0.361812 vs 0.361643)
+  - ΔNDCG@1000 = +0.000420 (0.474325 vs 0.473905)
+  - ΔF1@5 = +0.000146 (0.264873 vs 0.264727)
+
+Across-datasets aggregate:
+- This variant is currently **#5** by “Avg of 3 Test Metrics (across datasets)” in `SCOREBOARD.md`
+  (behind `torch_per_label_softmax_global_scale`, `torch_per_label_softmax_global`, `torch_per_label`,
+  and `torch_per_label_bias_global_plus_delta`).
+
+### Analysis
+
+- The global-weight anchor did **not** transfer cleanly from the `torch_mean_residual_*` family to the
+  per-label softmax-global family:
+  - It was effectively neutral on `yso-fi` (differences ~1e-4–1e-3).
+  - It was mildly positive on `koko` (tiny increases across all metrics), but not enough to matter.
+  - It was clearly negative on `yso-en`, especially on the top-k behavior captured by F1@5.
+- A plausible explanation is that anchoring `g` reduces the model’s ability to shift mass toward the
+  best-performing base model(s) for `yso-en`, while the per-label residual `w_delta` is already being
+  L2-shrunk and can’t fully compensate.
+- The “best overall” behavior of the softmax-global family appears to come primarily from:
+  - allowing the global mixture `g` to move freely (Variant 0: `torch_per_label_softmax_global`), and/or
+  - restoring global scale freedom (Variant 1: `torch_per_label_softmax_global_scale`),
+  rather than anchoring `g` tightly to a fixed initialization.
+- Follow-ups if you want to keep exploring anchoring:
+  - try a smaller `LAMBDA_GLOBAL_L2` (e.g. 1e-3 or 3e-3) to see if `yso-en` recovers while still
+    retaining any stability benefits.
+  - alternatively, anchor only early in training (warm-start regularization schedule), but that would
+    change the “one idea per variant” discipline.
 
 ---
 
