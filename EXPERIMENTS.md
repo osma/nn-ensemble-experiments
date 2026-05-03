@@ -89,10 +89,11 @@ These models allow fully independent weights per label, often reparameterized fo
 ### 3. `torch_per_label_mlp` Family
 *Original source: PER_LABEL_MLP.md*
 
-Two-stage models: stage 1 produces base logits; stage 2 applies a residual MLP correction.
+Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 
 | Variant | Description | Finding |
 |---------|-------------|---------|
+| `softmax_global_active_mlp` | End-to-end: Softmax global base + Active-label MLP. Uses multiplicative reweighting, tanh bounds, and centering. | **Strong result (#2 Overall)**. Safely integrates cross-label correlation without ranking collapse. Ties #1 model on Weighted Avg. |
 | `baseline` | Multiplicative: `base * (1 + gate * delta)`. | Safe but often a no-op on `yso-*`. |
 | `additive_delta` | `base + gate * delta`. | Regression on `yso-en` and `koko`. Perturbs low-confidence labels. |
 | `gate_per_label` | Per-active-label gate vector. | Regression on `koko`. Too many degrees of freedom. |
