@@ -266,17 +266,19 @@ def _render_top10_table(
 
 def _avg3_test_score(row: dict[str, str]) -> float:
     """
-    Average of the three test metrics used for per-dataset composite Top-N lists.
+    Weighted average of the three test metrics used for per-dataset composite Top-N lists.
 
     Policy (as requested):
       - Use test metrics only.
       - Exclude rows with any missing/non-finite metric (caller decides by checking finite result).
+      - Weights: 40% Test F1@5, 40% Test NDCG@10, 20% Test NDCG@1000.
     """
     keys = ("test ndcg@1000", "test ndcg@10", "test f1@5")
     vals = [_parse_float(row.get(k, "")) for k in keys]
     if not all(np.isfinite(v) for v in vals):
         return float("-inf")
-    return float(np.mean(vals))
+    # vals order: [ndcg@1000, ndcg@10, f1@5]
+    return 0.2 * vals[0] + 0.4 * vals[1] + 0.4 * vals[2]
 
 
 def _avg3_overall_score(rows_for_model: list[dict[str, str]]) -> float:
@@ -472,8 +474,8 @@ def update_markdown_scoreboard(
     top10_overall_avg3 = _render_top10_table(
         composite_overall_rows,
         sort_key="test avg3 all",
-        metric_label="Avg(Test NDCG@1000, NDCG@10, F1@5) across datasets",
-        title="Top 10 Models by Avg of 3 Test Metrics (across datasets)",
+        metric_label="Weighted Avg (0.4 NDCG@10, 0.4 F1@5, 0.2 NDCG@1000) across datasets",
+        title="Top 10 Models by Weighted Avg (across datasets)",
     )
 
     # --- Per-dataset composite Top-10 (avg of 3 test metrics) ---
@@ -510,8 +512,8 @@ def update_markdown_scoreboard(
             _render_top10_table(
                 composite_rows,
                 sort_key="test avg3",
-                metric_label="Avg(Test NDCG@1000, NDCG@10, F1@5)",
-                title=f"Top 10 Models by Avg of 3 Test Metrics ({ds})",
+                metric_label="Weighted Avg (0.4 NDCG@10, 0.4 F1@5, 0.2 NDCG@1000)",
+                title=f"Top 10 Models by Weighted Avg ({ds})",
             )
         )
 

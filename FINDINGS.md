@@ -16,10 +16,10 @@ Scope:
 - Best Avg **Test NDCG@1000**: `torch_mean` (~0.6695)
 - Best Avg **Test F1@5**: `torch_lowrank_residual` (~0.4216)
 
-### Per-dataset best by composite (avg of Test NDCG@1000, NDCG@10, F1@5)
-- `koko`: `torch_per_label_l1_delta` (~0.3672)
-- `yso-en`: `torch_mean_residual` (~0.6204)
-- `yso-fi`: `torch_per_label` (~0.6903)
+### Per-dataset best by composite (Weighted Avg: 40% F1@5, 40% NDCG@10, 20% NDCG@1000)
+- `koko`: `torch_nn_split_per_label` (~0.3543)
+- `yso-en`: `torch_per_label_softmax_global` (~0.6096)
+- `yso-fi`: `torch_per_label` (~0.6650)
 
 Takeaway: **No single architecture dominates all datasets**, but a few families are consistently strong:
 - `torch_per_label*` for logits-based per-label linear models
@@ -33,7 +33,7 @@ Takeaway: **No single architecture dominates all datasets**, but a few families 
 ### 1) Strong, simple baselines are hard to beat
 - **Per-label linear ensemble on logits** (`torch_per_label`) is a top performer overall and wins on `yso-fi` composite.
 - **Mean-like ensemble with log1p preprocessing** (`torch_mean`) is the best on Avg Test NDCG@1000 across datasets.
-- **Residual shrinkage around a good prior** (`torch_mean_residual`) is best on `yso-en` composite.
+- **Global softmax scaling on per-label models** (`torch_per_label_softmax_global`) is best on `yso-en` composite.
 
 Pattern: start from a strong baseline, then add **small, controlled extra capacity** with a bias toward “do no harm”.
 
@@ -63,7 +63,7 @@ Dataset-specific initialization (`ensemble3_init_weights`) is used in:
 This reduces optimization burden and makes “residual” parameterizations meaningful (start near a reasonable solution).
 
 ### 5) Sparsity/regularization on deviations can help for some datasets
-- `torch_per_label_l1_delta` wins the `koko` composite leaderboard.
+- `torch_nn_split_per_label` wins the `koko` composite leaderboard.
 - The L1 penalty is applied to **delta from initialization** (not raw weights), a sensible “shrink-to-prior” formulation.
 
 Takeaway: `koko` likely benefits from more “model selection per label” behavior (sparse deviations).
