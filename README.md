@@ -23,28 +23,10 @@ for large label spaces — and what reliably makes things worse.
 
 ---
 
-## Current results (from `SCOREBOARD.md`)
+## Documentation
 
-The scoreboard is auto-generated and is the single source of truth:
-
-➡ **[SCOREBOARD.md](SCOREBOARD.md)**
-
-As of the current committed scoreboard:
-
-### Best overall (avg across datasets)
-
-- Best Avg **Test NDCG@10**: `torch_lowrank_residual` (0.571592)
-- Best Avg **Test NDCG@1000**: `torch_mean` (0.669467)
-- Best Avg **Test F1@5**: `torch_lowrank_residual` (0.421617)
-
-### Best per dataset (avg of 3 test metrics)
-
-- `koko`: `torch_per_label_l1_delta` (0.367199)
-- `yso-en`: `torch_mean_residual` (0.620397)
-- `yso-fi`: `torch_per_label` (0.690252)
-
-> Note: The global Top‑10 tables intentionally exclude most base model rows
-> (to reduce noise), except for `nn` which is kept as a baseline reference.
+- **[SCOREBOARD.md](SCOREBOARD.md)**: The single source of truth for all model performance metrics and rankings.
+- **[EXPERIMENTS.md](EXPERIMENTS.md)**: Detailed history of all architectures tried, findings, and analysis of what worked vs. what didn't.
 
 ---
 

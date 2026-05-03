@@ -1,557 +1,121 @@
-# Experiments: `torch_mean_residual` Variants
+# Experiments and Findings
 
-This document tracks small, controlled variations of `torch_mean_residual` for benchmarking.
-Each variant changes **one aspect** of the model while keeping the core structure:
-
-- **Global per-model weights** (shared across all labels)
-- **Label-specific per-model weights** (per-label deviations / adjustments)
-- A **label bias** term in some form
-
-The goal is to isolate which modeling choices improve ranking metrics (NDCG@k, F1@k)
-under the existing training/evaluation protocol.
+This document centralizes the findings, analysis, and detailed experiment logs for the various model architectures tried in this repository. The primary goal is to understand what actually improves multilabel ranking for large label spaces — and what reliably makes things worse.
 
 ---
 
-## Baseline: `torch_mean_residual`
+## High-Level Takeaways
 
-Current reference formulation (conceptual):
-
-- Parameters:
-  - `global_w[m]` (learnable, per model)
-  - `delta_w[m, l]` (learnable, per model × label; initialized to 0)
-  - `bias[l]` (learnable, per label)
-- Effective weights:
-  - `w_eff[m, l] = global_w[m] + delta_w[m, l]`
-- Logits:
-  - `logits[b, l] = sum_m w_eff[m, l] * x[b, m, l] + bias[l]`
-- Regularization:
-  - L2 penalty on `delta_w` (shrink residuals toward 0)
-  - L2 penalty on `bias`
-
-Baseline reference (from `SCOREBOARD.md`, test metrics):
-- `yso-fi`: NDCG@10=0.687398, NDCG@1000=0.799336, F1@5=0.521631
-- `yso-en`: NDCG@10=0.634044, NDCG@1000=0.757152, F1@5=0.447385
-- `koko`:   NDCG@10=0.357736, NDCG@1000=0.467187, F1@5=0.261571
+- **No single architecture dominates all datasets**, but a few families are consistently strong: `torch_per_label*` for logits-based per-label linear models and `torch_mean*` for log1p-preprocessed mean-like models.
+- **Strong, simple baselines are hard to beat.** Small, controlled extra capacity with a bias toward "do no harm" is the most successful pattern.
+- **Logits + BCEWithLogitsLoss is a strong default.** It avoids saturation issues and provides smoother optimization for ranking.
+- **Preprocessing and initialization are critical.** Keeping preprocessing outside the model and using dataset-specific initialization reduces optimization burden and stabilizes results.
+- **Extra capacity interacts with class imbalance.** Without strong constraints, high-capacity models (like MLPs) can quickly learn to suppress all scores to satisfy the sparse objective, destroying ranking.
 
 ---
 
-## Variant 1: `torch_mean_residual_softmax_global`
+## What Works (Reliably helpful patterns)
 
-**What changes:** constrain global weights to a convex combination via softmax.
+### 1. Simple Linear/Mean Ensembles
+- **Per-label linear ensemble on logits** (`torch_per_label`) is a top performer overall.
+- **Mean-like ensemble with log1p preprocessing** (`torch_mean`) is best for deep ranking (NDCG@1000).
+- **Global softmax scaling** (`torch_per_label_softmax_global`) stabilizes the mixture and improves generalization.
 
-- Replace global weights parameterization with:
-  - learn `global_logits[m]` (unconstrained)
-  - compute `global_w = softmax(global_logits)` (non-negative, sums to 1)
-- Keep residual weights additive:
-  - `w_eff[m, l] = global_w[m] + delta_w[m, l]`
+### 2. Principled Regularization
+- **Shrink-to-prior**: L1/L2 penalties on **deltas from initialization** (rather than raw weights) are very effective.
+- **Frequency-weighted shrinkage**: Shrinking rare labels harder while allowing flexibility for common labels (as seen in `torch_per_label_l1_delta`).
 
-**Hypothesis:** stabilizes optimization and discourages degenerate negative/large global weights;
-tests whether unconstrained global scaling is important.
-
-### Results (2026-03-16)
-
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_softmax_global`
-
-Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=5):  NDCG@10=0.696986, NDCG@1000=0.804392, F1@5=0.536324
-- `yso-en` (best epoch=8):  NDCG@10=0.648991, NDCG@1000=0.766754, F1@5=0.461473
-- `koko`   (best epoch=4):  NDCG@10=0.361896, NDCG@1000=0.477831, F1@5=0.266607
-
-Delta vs baseline `torch_mean_residual` (test metrics):
-- `yso-fi`: +0.009588 NDCG@10, +0.005056 NDCG@1000, +0.014693 F1@5
-- `yso-en`: +0.014947 NDCG@10, +0.009602 NDCG@1000, +0.014088 F1@5
-- `koko`:   +0.004160 NDCG@10, +0.010644 NDCG@1000, +0.005036 F1@5
-
-### Analysis
-
-- This variant is a **consistent improvement across all three datasets**, and improves
-  **all three reported test metrics** on each dataset in this run.
-- The biggest gains are on `yso-en` (notably NDCG@10 and F1@5), suggesting that
-  constraining global weights to a convex combination may reduce harmful global
-  weight drift and let `delta_w` and `bias` do the fine-grained per-label work.
-- `koko` gains are smaller in absolute terms but still positive, with the largest
-  lift on NDCG@1000 (+0.0106). This suggests the effect is not purely a top-10
-  precision bump; it also improves deeper ranking.
-
-Notes / follow-ups:
-- The run used the default regularization (`lambda_delta=1e-2`, `lambda_bias=1e-3`).
-  Since softmax removes the possibility of negative global weights, it may be worth
-  re-sweeping `lambda_delta` slightly downward (e.g. 3e-3, 1e-3) to see if residuals
-  can be allowed to carry more signal without overfitting.
-- Consider adding debug prints of `global_w()` at the best epoch to verify whether
-  the learned convex weights remain close to dataset-provided initial weights or
-  meaningfully shift.
+### 3. Controlled Extensions
+- **Global weights + per-label residuals + bias + explicit L2** is a robust template for extensions.
+- **Low-rank structure** can capture useful shared label structure when trained with careful regularization.
 
 ---
 
-## Variant 2: `torch_mean_residual_globalxdelta`
+## What Has Not Worked (or is consistently risky)
 
-**What changes:** make label-specific deviations multiplicative around the global weights.
+### 1. High-Capacity MLPs over Flattened Inputs
+- Big MLPs over flattened (models × labels) inputs are unstable and consistently degrade ranking.
+- **Failure Mode**: The MLP learns a global negative suppressor (ranking collapse) to satisfy the BCE objective on sparse negatives.
 
-- Effective weights become:
-  - `w_eff[m, l] = global_w[m] * (1 + delta_w[m, l])`
-- Initialize `delta_w = 0` so the starting behavior matches the baseline.
+### 2. Probability-Space Training with Hard Clamping
+- Outputting probabilities and using `BCELoss` with hard clamps can saturate gradients and make learned corrections "stick" at the bounds.
 
-**Hypothesis:** per-label adjustments should be relative to the global strength of each base model.
-May be more stable than additive residuals when base score scales differ.
-
-### Implementation
-
-- Script: `benchmarks/torch_mean_residual_globalxdelta.py`
-- Model name written to scoreboard: `torch_mean_residual_globalxdelta(...)`
-- CLI: identical to `torch_mean_residual` (no new flags)
-
-### Results (2026-03-16)
-
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_globalxdelta`
-
-Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=1): NDCG@10=0.676377, NDCG@1000=0.792537, F1@5=0.508068
-- `yso-en` (best epoch=1): NDCG@10=0.624606, NDCG@1000=0.751390, F1@5=0.441895
-- `koko`   (best epoch=1): NDCG@10=0.356553, NDCG@1000=0.469326, F1@5=0.260765
-
-Delta vs baseline `torch_mean_residual` (test metrics):
-- `yso-fi`: −0.011021 NDCG@10, −0.006799 NDCG@1000, −0.013563 F1@5
-- `yso-en`: −0.009438 NDCG@10, −0.005762 NDCG@1000, −0.005490 F1@5
-- `koko`:   −0.001183 NDCG@10, +0.002139 NDCG@1000, −0.000806 F1@5
-
-### Analysis
-
-- This variant is **mostly worse than the additive baseline** on the two YSO datasets, across
-  all three metrics. It is close to neutral on `koko`, with a small gain on NDCG@1000 but
-  slight losses on NDCG@10 and F1@5.
-- Early stopping consistently picked **epoch 1** for all datasets, and train-subset NDCG@1000
-  tended to **decrease after the first epoch**. This suggests the multiplicative parameterization
-  may be more sensitive to optimization (even though the residuals start at zero), or that the
-  model quickly overfits/shifts away from a good initial regime.
-- A plausible failure mode is that multiplicative residuals effectively couple the scale of per-label
-  adjustments to the learned `global_w[m]`. When `global_w[m]` is small, the model has limited
-  ability to “rescue” that source on specific labels; when `global_w[m]` is large, per-label tweaks
-  can become too influential unless `delta_w` is very tightly regularized.
-
-Notes / follow-ups:
-- Try a **smaller learning rate** (e.g. `LR=0.001`) for this variant; multiplicative residuals
-  can make gradients more scale-sensitive.
-- Consider regularizing `global_w` (either via softmax parameterization like Variant 1, or an anchor-to-init penalty as in Variant 6) to reduce drift.
-- If keeping this variant, it may be best framed as “not beneficial under current training defaults”
-  rather than as a new default candidate.
+### 3. Unconstrained Cross-Label Mixing
+- Cross-label mixing can help in isolated cases but is not a free win. It introduces many hyperparameters and can help one metric while hurting another.
+- **Mitigation**: Requires strong safety rails like bounded gates, per-example centering, and explicit penalties.
 
 ---
 
-## Variant 3: `torch_mean_residual_delta_tanh_clamp`
+## Detailed Experiment Logs
 
-**What changes:** bound the per-label residual weights using a smooth clamp.
+### 1. `torch_mean_residual` Family
+*Original source: EXPERIMENTS.md*
 
-- Learn `delta_raw[m, l]` but compute:
-  - `delta_w[m, l] = delta_max * tanh(delta_raw[m, l])`
-- Effective weights remain additive:
-  - `w_eff[m, l] = global_w[m] + delta_w[m, l]`
+This family focuses on global per-model weights shared across all labels, with label-specific deviations.
 
-**Hypothesis:** prevents extreme per-label weights for a subset of labels; tests whether occasional
-large residuals help ranking or primarily cause overfitting / instability.
+| Variant | Description | Finding |
+|---------|-------------|---------|
+| `baseline` | `global_w[m] + delta_w[m,l] + bias[l]` with L2. | Strong default; baseline for others. |
+| `softmax_global` | Global weights constrained via softmax. | **Consistent improvement** across all datasets. Reduces harmful drift. |
+| `globalxdelta` | Multiplicative label-specific deviations. | Mostly worse than additive. Sensitive to scale and optimization. |
+| `tanh_clamp` | Bounded per-label residual weights via tanh. | Worse than baseline. May remove beneficial capacity. |
+| `bias_per_model` | Added per-model global bias term. | Consistent regression. Adds redundant degrees of freedom. |
+| `bias_residual` | Split bias into global scalar + per-label residual. | Effectively identical to baseline. |
+| `l2_anchor_global` | Anchor `global_w` to dataset init weights via L2. | **Consistent improvement**. Stabilizes later-epoch training. |
+| `softmax_global_l2_anchor` | Combines softmax and anchoring. | **Clear improvement** over baseline; tie with anchor-only. |
+| `freq_weighted_delta` | L2 penalty on `delta_w` weighted by label frequency. | Near-tie with baseline. Not a strong stabilizer on its own. |
 
-### Implementation
+### 2. `torch_per_label` Family
+*Original source: PER_LABEL.md and EXPERIMENTS2.md*
 
-- Script: `benchmarks/torch_mean_residual_delta_tanh_clamp.py`
-- Model name written to scoreboard: `torch_mean_residual_delta_tanh_clamp(...)`
-- CLI: identical to `torch_mean_residual` (no new flags)
+These models allow fully independent weights per label, often reparameterized for better generalization.
 
-Notes:
-- `delta_max` is implemented as a module-level constant to keep comparisons controlled (no CLI flag).
-- Regularization is applied to `delta_raw` (not `delta_w`) for smoother optimization when tanh saturates.
+| Variant | Description | Finding |
+|---------|-------------|---------|
+| `global_plus_delta` | `w_eff[m,l] = w_global[m] + w_delta[m,l]`. | Neutral-to-negative. Needs explicit constraints on `w_delta`. |
+| `softmax_global` | `w_eff[m,l] = softmax(g_raw)[m] + w_delta[m,l]`. | **Very competitive**. Beats baseline on `yso-en` and `koko`. |
+| `global_times_scale` | Multiplicative label scaling around global weights. | Competitive but rarely beats the baseline. Too restrictive. |
+| `bias_global_plus_delta` | Reparameterized bias into global + residual. | Neutral-to-slightly-positive. Low-risk change. |
+| `softmax_global_scale` | `s * softmax(g) + w_delta`. | **Top overall** by Avg Test Metrics. Recovers scale freedom. |
+| `softmax_global_l2_anchor` | Softmax + L2 anchor to init weights. | Neutral on `yso-fi`, worse on `yso-en`. Tie on `koko`. |
 
-### Results (2026-03-16)
+### 3. `torch_per_label_mlp` Family
+*Original source: PER_LABEL_MLP.md*
 
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_delta_tanh_clamp`
+Two-stage models: stage 1 produces base logits; stage 2 applies a residual MLP correction.
 
-Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-
-Observed behavior:
-- Early stopping picked **epoch 1 for all datasets**.
-- Train-subset NDCG@1000 tended to **decrease after epoch 1**, suggesting the model quickly moves away
-  from a good initial regime under the default LR/regularization.
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=1): NDCG@10=0.676865, NDCG@1000=0.793029, F1@5=0.509067
-- `yso-en` (best epoch=1): NDCG@10=0.623692, NDCG@1000=0.750391, F1@5=0.441138
-- `koko`   (best epoch=1): NDCG@10=0.356272, NDCG@1000=0.468751, F1@5=0.260805
-
-Delta vs baseline `torch_mean_residual` (test metrics):
-- `yso-fi`: −0.010533 NDCG@10, −0.006307 NDCG@1000, −0.012564 F1@5
-- `yso-en`: −0.010352 NDCG@10, −0.006761 NDCG@1000, −0.006247 F1@5
-- `koko`:   −0.001464 NDCG@10, +0.001564 NDCG@1000, −0.000766 F1@5
-
-### Analysis
-
-- Overall this clamp variant is **worse than the additive baseline** on both YSO datasets across all three metrics.
-- On `koko` it is **very close to neutral**, with a small gain on deep ranking (NDCG@1000) but slight losses on
-  NDCG@10 and F1@5.
-- The fact that the best epoch is consistently **1** suggests either:
-  - The tanh parameterization + default `LR=0.003` causes too-aggressive movement in `delta_raw`/`bias`, or
-  - The clamp simply removes beneficial capacity (i.e., some labels benefit from larger residuals than `delta_max=0.25` permits).
-- Unlike the multiplicative `globalxdelta` variant, this one still preserves the additive structure; the degradation
-  therefore points more specifically to the **bounded residual capacity** (and/or the optimization dynamics induced by tanh).
-
-Notes / follow-ups:
-- Try a smaller learning rate (e.g. `LR=0.001`) to see if the post-epoch-1 drop is an optimization artifact.
-- If keeping the clamp idea, consider increasing `delta_max` modestly (e.g. 0.5) or making it dataset-tuned, but that
-  would reduce the “controlled comparison” nature unless done systematically.
+| Variant | Description | Finding |
+|---------|-------------|---------|
+| `baseline` | Multiplicative: `base * (1 + gate * delta)`. | Safe but often a no-op on `yso-*`. |
+| `additive_delta` | `base + gate * delta`. | Regression on `yso-en` and `koko`. Perturbs low-confidence labels. |
+| `gate_per_label` | Per-active-label gate vector. | Regression on `koko`. Too many degrees of freedom. |
+| `gate_per_sample` | Data-dependent gate via pooling features. | Safe but effectively constant in practice. |
+| `layernorm_feats` | LayerNorm over flattened features before MLP. | Regression. LN amplifies small widespread signals. |
+| `rank_bottleneck` | Low-rank bottleneck (rank=32) in MLP output. | No gain. `koko` still regresses. |
+| `remove_centering` | Remove per-sample centering on `delta`. | **Severe regression**. Learns degenerate global shift. |
 
 ---
 
-## Variant 4: `torch_mean_residual_bias_per_model`
+## Methodology and Hypotheses
 
-**What changes:** add a tiny per-model global bias term, in addition to per-label bias.
+### Early Stopping Policy
+All torch scripts use **train subset NDCG@1000** for early stopping to avoid test leakage. Standardizing on computing test metrics only when saving a new best snapshot is preferred.
 
-- Add parameter:
-  - `bias_model[m]` (learnable, size `M`)
-- Example formulation:
-  - `logits[b, l] = sum_m w_eff[m, l] * (x[b, m, l] + bias_model[m]) + bias_label[l]`
+### Preprocessing
+Consistent use of `log1p(clamp(x,0))` for logits-based models. Keeping this outside the model prevents the optimizer from undoing calibration benefits.
 
-(Equivalent algebraic forms are acceptable; the intent is a per-model offset applied globally.)
-
-**Hypothesis:** compensates for systematic per-model offsets after preprocessing (e.g. log1p);
-minimal parameter increase (just 3 scalars in the 3-model case).
-
-### Results (2026-03-16)
-
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_bias_per_model`
-
-Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=1): NDCG@10=0.683045, NDCG@1000=0.795515, F1@5=0.513818
-- `yso-en` (best epoch=1): NDCG@10=0.623849, NDCG@1000=0.747570, F1@5=0.439277
-- `koko`   (best epoch=4): NDCG@10=0.351774, NDCG@1000=0.466812, F1@5=0.258286
-
-Delta vs baseline `torch_mean_residual` (test metrics):
-- `yso-fi`: −0.004353 NDCG@10, −0.003821 NDCG@1000, −0.007813 F1@5
-- `yso-en`: −0.010195 NDCG@10, −0.009582 NDCG@1000, −0.008108 F1@5
-- `koko`:   −0.005962 NDCG@10, −0.000375 NDCG@1000, −0.003285 F1@5
-
-### Analysis
-
-- This variant is a **consistent regression vs the baseline** across all datasets/metrics in this run.
-  The added capacity (3 extra scalars) did not translate into improved ranking; the most notable drop
-  is on `yso-en` (≈−0.01 on both NDCG@10 and NDCG@1000).
-- Early stopping behavior:
-  - `yso-fi` and `yso-en` chose **epoch 1**, and the train-subset NDCG@1000 degraded slightly afterwards,
-    suggesting the per-model bias quickly moves the model away from a good initial regime.
-  - `koko` chose **epoch 4**, indicating the extra bias can be fit without immediate collapse there, but it
-    still did not improve test ranking.
-- Plausible interpretation: with inputs already log1p-transformed and **non-negative**, adding an additive
-  per-model offset inside the weighted sum effectively introduces a second set of global degrees of freedom
-  (it behaves like a shift scaled by global/residual weights). This can partially duplicate the role of the
-  existing per-label bias term, while being less directly aligned with label base rates, which may make it
-  easier to overfit the early-stop subset without improving generalization.
-
-Notes / follow-ups:
-- If keeping this variant for completeness, consider adding a small L2 penalty on `bias_model` (even 1e-4),
-  or reparameterize it as a *multiplicative* per-model scale (closer to calibration) rather than an additive
-  offset. Both would be new changes, so they should be evaluated as separate variants.
+### Hypotheses
+1. **Preservation of Ordering**: Ranking improves when the model preserves relative ordering rather than overfitting calibration.
+2. **Label Independence**: Per-label independence is a strong prior because label spaces are huge and sparse.
+3. **Logit Space Advantage**: Training in logit space avoids saturation and provides smoother gradients.
+4. **Imbalance vs. Capacity**: Class imbalance interacts with capacity; broad shifts are rewarded by BCE but harm ranking.
 
 ---
 
-## Variant 5: `torch_mean_residual_bias_residual`
-
-**What changes:** split label bias into a global scalar + per-label residual (mirrors the weight design).
-
-- Bias becomes:
-  - `bias[l] = bias_global + bias_delta[l]`
-- Regularize `bias_delta` strongly (shrink toward 0); do **not** regularize `bias_global`.
-
-**Hypothesis:** reduces per-label bias overfitting while retaining a dataset-wide intercept; tests whether
-the per-label bias term is doing “too much work”.
-
-### Results (2026-03-16)
-
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_bias_residual`
-
-Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=2): NDCG@10=0.687098, NDCG@1000=0.799073, F1@5=0.521394
-- `yso-en` (best epoch=3): NDCG@10=0.634035, NDCG@1000=0.757160, F1@5=0.447385
-- `koko`   (best epoch=1): NDCG@10=0.357903, NDCG@1000=0.467733, F1@5=0.261421
-
-Delta vs baseline `torch_mean_residual` (test metrics):
-- `yso-fi`: −0.000300 NDCG@10, −0.000263 NDCG@1000, −0.000237 F1@5
-- `yso-en`: −0.000009 NDCG@10, +0.000008 NDCG@1000, +0.000000 F1@5
-- `koko`:   +0.000167 NDCG@10, +0.000546 NDCG@1000, −0.000150 F1@5
-
-### Analysis
-
-- Under the default settings (`LR=0.003`, `lambda_delta=1e-2`, `lambda_bias=1e-3`), this variant is
-  **effectively identical to the baseline** `torch_mean_residual` across all datasets: deltas are at the
-  1e-4 to 1e-3 level.
-- This suggests the baseline’s per-label bias vector is *already* behaving like a “global + small residual”
-  decomposition under L2 regularization, so explicitly parameterizing `bias_global + bias_delta[l]` does not
-  change the learned solution in a meaningful way.
-- The early-stopping epochs differ slightly by dataset (2/3/1), but the final selected test metrics remain
-  essentially the same as the baseline, indicating no systematic stability improvement (or regression) from
-  this reparameterization alone.
-- Practical conclusion: this is a good “sanity check” variant, but **not a compelling new default** unless
-  paired with a different bias-regularization policy (e.g. much stronger `lambda_bias` on `bias_delta` than
-  the baseline uses on `bias`, or an explicit constraint/centering), which would be a separate experiment.
-
----
-
-## Variant 6: `torch_mean_residual_l2_anchor_global`
-
-**What changes:** add an explicit penalty anchoring `global_w` to the dataset-provided init weights.
-
-- Let `w0[m]` be `DatasetConfig.ensemble3_init_weights` (or uniform if unavailable).
-- Add regularization term:
-  - `lambda_global * mean((global_w - w0)**2)`
-
-**Hypothesis:** clarifies how much improvement comes from moving global weights vs. relying on per-label residuals;
-may improve cross-dataset stability and reduce overfitting.
-
-### Results (2026-03-16)
-
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_l2_anchor_global`
-
-Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=6):  NDCG@10=0.698331, NDCG@1000=0.806099, F1@5=0.536818
-- `yso-en` (best epoch=16): NDCG@10=0.645636, NDCG@1000=0.763440, F1@5=0.461992
-- `koko`   (best epoch=5):  NDCG@10=0.361355, NDCG@1000=0.476810, F1@5=0.265731
-
-Delta vs baseline `torch_mean_residual` (test metrics):
-- `yso-fi`: +0.010933 NDCG@10, +0.006763 NDCG@1000, +0.015187 F1@5
-- `yso-en`: +0.011592 NDCG@10, +0.006288 NDCG@1000, +0.014607 F1@5
-- `koko`:   +0.003619 NDCG@10, +0.009623 NDCG@1000, +0.004160 F1@5
-
-### Analysis
-
-- This variant is a **consistent improvement across all three datasets**, improving **all three test metrics**
-  in this run. The gains are especially meaningful on the YSO datasets (≈+0.011 NDCG@10 and ≈+0.014–0.015 F1@5),
-  and also show a clear lift on deep ranking (NDCG@1000) on `koko`.
-- Compared to `torch_mean_residual_softmax_global`, the effect is conceptually similar (restricting/regularizing
-  global weights), but it does so **without constraining** `global_w` to be a simplex point. That may preserve
-  some flexibility (e.g. allowing negative weights if ever useful) while still discouraging drift away from the
-  dataset-provided initialization.
-- The long best-epoch for `yso-en` (epoch 16) suggests the anchor penalty may help *stabilize later-epoch training*
-  by keeping global weights near `w0` while allowing `delta_w`/`bias` to improve gradually. In contrast, several
-  other variants tended to peak at epoch 1 and then degrade.
-- Practical conclusion: this is a strong candidate to keep as a default `torch_mean_residual` variant, or at least
-  as a “stability regularization” knob to use when global weights drift harms generalization.
-
-Notes / follow-ups:
-- Consider exposing `lambda_global` as a CLI flag for a small sweep (e.g. 3e-3, 1e-2, 3e-2) to see if the gains
-  saturate or if there is a dataset-sensitive optimum. (For controlled comparisons, keep it constant unless doing
-  an explicit sweep.)
-- If adding diagnostics: print `||global_w - w0||_2` at the best epoch (already computed via `global_anchor_l2()`)
-  to confirm whether improvements correlate with reduced global drift vs. changes in `delta_w`/`bias`.
-
----
-
-## Variant 7: `torch_mean_residual_softmax_global_l2_anchor`
-
-**What changes:** combine Variant 1 and Variant 6 by using *both*:
-1) a softmax parameterization for the global weights, and  
-2) an explicit L2 penalty anchoring the resulting `global_w` to the dataset-provided init weights.
-
-- Replace global weights parameterization with:
-  - learn `global_logits[m]` (unconstrained)
-  - compute `global_w = softmax(global_logits)` (non-negative, sums to 1)
-- Keep residual weights additive:
-  - `w_eff[m, l] = global_w[m] + delta_w[m, l]`
-- Add anchor penalty:
-  - let `w0[m]` be `DatasetConfig.ensemble3_init_weights` (or uniform if unavailable)
-  - add `lambda_global * mean((global_w - w0)**2)` to the training loss
-
-**Hypothesis:** both softmax and anchoring individually improved metrics across all datasets. Softmax
-removes degenerate global weight solutions (negative/very large), while the anchor stabilizes training
-by discouraging drift away from a strong dataset-specific initialization. The combination may further
-improve generalization and reduce the “peaks at epoch 1 then degrades” behavior seen in several
-other variants.
-
-### Implementation
-
-- Script: `benchmarks/torch_mean_residual_softmax_global_l2_anchor.py`
-- Model name written to scoreboard: `torch_mean_residual_softmax_global_l2_anchor(...)`
-- CLI: identical to `torch_mean_residual` (no new flags)
-
-Notes:
-- The anchor strength is a script constant (`LAMBDA_GLOBAL_L2`) to keep comparisons controlled.
-
-### Results (2026-03-16)
-
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_softmax_global_l2_anchor`
-
-Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=6):  NDCG@10=0.698110, NDCG@1000=0.806149, F1@5=0.536644
-- `yso-en` (best epoch=16): NDCG@10=0.645476, NDCG@1000=0.763398, F1@5=0.461776
-- `koko`   (best epoch=5):  NDCG@10=0.361353, NDCG@1000=0.476813, F1@5=0.265713
-
-Delta vs baseline `torch_mean_residual` (test metrics):
-- `yso-fi`: +0.010712 NDCG@10, +0.006813 NDCG@1000, +0.015013 F1@5
-- `yso-en`: +0.011432 NDCG@10, +0.006246 NDCG@1000, +0.014391 F1@5
-- `koko`:   +0.003617 NDCG@10, +0.009626 NDCG@1000, +0.004142 F1@5
-
-Delta vs Variant 6 `torch_mean_residual_l2_anchor_global` (test metrics):
-- `yso-fi`: −0.000221 NDCG@10, +0.000050 NDCG@1000, −0.000174 F1@5
-- `yso-en`: −0.000160 NDCG@10, −0.000042 NDCG@1000, −0.000216 F1@5
-- `koko`:   −0.000002 NDCG@10, +0.000003 NDCG@1000, −0.000018 F1@5
-
-### Analysis
-
-- This combined variant is a **clear improvement over the baseline** `torch_mean_residual` across all datasets
-  and all three test metrics, matching the qualitative behavior of both parent ideas (softmax global weights and
-  anchoring).
-- Compared to the dedicated anchor-only variant (`torch_mean_residual_l2_anchor_global`), results are
-  **effectively a tie** (differences are on the order of 1e-4). This suggests that, with the current training
-  defaults, the anchor penalty is doing most of the stabilizing work; adding softmax mainly changes the
-  parameterization/constraints without producing a measurable additional gain.
-- Training dynamics in this run show **non-trivial best epochs** (6 / 16 / 5), rather than collapsing to epoch 1.
-  This aligns with the hypothesis that anchoring (and/or softmax) reduces “early peak then degrade” behavior and
-  supports longer training without drifting into worse regimes.
-- Practical takeaway: keep this variant as a strong candidate in the “stable improvements” bucket. If choosing
-  between it and Variant 6, prefer whichever constraint you want operationally:
-  - pick Variant 7 if you want global weights to remain a convex combination (non-negative, sum to 1),
-  - pick Variant 6 if you want to preserve the possibility of negative/global scaling while still anchoring.
-
----
-
-## Variant 8: `torch_mean_residual_freq_weighted_delta`
-
-**What changes:** weight the per-label residual L2 penalty by label frequency.
-
-- Keep the baseline logits form:
-  - `w_eff[m, l] = global_w[m] + delta_w[m, l]`
-  - `logits[b, l] = sum_m w_eff[m, l] * x[b, m, l] + bias[l]`
-- Change only the delta regularizer:
-  - `freq[l] = # positive train examples for label l`
-  - `alpha[l] = 1 / sqrt(freq[l] + 1)`, normalized so `mean(alpha)=1`
-  - `delta_l2 = mean_{m,l}( alpha[l] * delta_w[m,l]^2 )`
-  - `loss_reg_delta = lambda_delta * delta_l2`
-
-**Hypothesis:** a single global `lambda_delta` is a blunt instrument for large label spaces. Weighting the
-penalty shrinks rare labels harder (reduce overfit) while allowing frequent labels more per-label flexibility
-(closer to `torch_per_label` behavior).
-
-### Results (2026-03-16)
-
-Command:
-- `./regenerate_scoreboard.sh --models torch_mean_residual_freq_weighted_delta`
-
-Run notes:
-- Device: CPU
-- Best epoch is selected by **train subset NDCG@1000** early-stopping (same as baseline).
-- Hyperparams: `lambda_delta=1e-2`, `lambda_bias=1e-3` (defaults)
-
-Test metrics (best epoch per dataset from run output):
-- `yso-fi` (best epoch=2): NDCG@10=0.687567, NDCG@1000=0.799662, F1@5=0.522855
-- `yso-en` (best epoch=3): NDCG@10=0.634661, NDCG@1000=0.757517, F1@5=0.447683
-- `koko`   (best epoch=1): NDCG@10=0.357814, NDCG@1000=0.466835, F1@5=0.261462
-
-Delta vs baseline `torch_mean_residual` (test metrics from `SCOREBOARD.md`):
-- `yso-fi`: +0.000169 NDCG@10, +0.000326 NDCG@1000, +0.001224 F1@5
-- `yso-en`: +0.000617 NDCG@10, +0.000365 NDCG@1000, +0.000298 F1@5
-- `koko`:   +0.000078 NDCG@10, −0.000352 NDCG@1000, −0.000109 F1@5
-
-### Analysis
-
-- Overall this is a **near-tie with the baseline** `torch_mean_residual` under the default settings.
-  Improvements on `yso-fi`/`yso-en` are very small (1e-4 to 1e-3) and could be within run-to-run noise.
-- On `koko` it is **slightly worse** on deep ranking (NDCG@1000) and F1@5, also at a very small magnitude.
-- Training dynamics observed in the run output:
-  - `yso-fi`: peaked at epoch 2 then degraded sharply by epoch 4 (train subset NDCG@1000 dropped to 0.7659).
-  - `yso-en`: peaked at epoch 3; later epochs showed mixed behavior (test NDCG@10 continued rising through epoch 5,
-    but early-stop metric did not).
-  - `koko`: peaked at epoch 1 and degraded rapidly; this mirrors some other variants’ “epoch 1 peak then degrade” behavior.
-- Interpretation: frequency-weighting *alone* does not appear to be a strong stabilizer or consistent win. It may still be
-  useful as a complementary idea, but the earlier **global weight anchoring** variants (6/7) produced much larger, consistent
-  gains across datasets. If we revisit this, the most informative next step is to **combine frequency-weighted delta with global
-  anchoring** (either L2 anchor or softmax+anchor) while keeping everything else identical.
-
-Notes / follow-ups:
-- If testing further: combine with Variant 6 (L2 anchor on `global_w`) and keep the same defaults, then optionally do a small
-  sweep on `lambda_delta` (e.g. `1e-2, 3e-3, 1e-3`) to see whether the weighted penalty enables a lower global shrinkage without
-  destabilizing rare labels.
-- Consider logging a quick diagnostic of `alpha` distribution (min/median/p99) to ensure the weighting is not overly extreme on
-  `koko` (which may have different label-frequency characteristics).
-
----
-
-## Proposed next experiment: `torch_mean_residual_freq_weighted_delta` (inspired by `torch_per_label`)
-
-**What changes:** keep the best-performing stabilization idea (global-weight anchoring), but make the
-**per-label residual shrinkage strength depend on label frequency**.
-
-Motivation / inspiration from `torch_per_label`:
-- `torch_per_label` wins largely because it can learn a *different mixture of base models per label*.
-- `torch_mean_residual` already has this capacity via `delta_w[m, l]`, but a **single global** `lambda_delta`
-  is a blunt instrument for very large label spaces: it likely over-shrinks frequent labels (hurting fit),
-  while under-regularizing rare labels (risking overfit).
-- A standard regularization trick is **stronger shrinkage for rarer labels**, weaker for common labels.
-
-### Formulation
-
-Keep the baseline logits form:
-
-- `w_eff[m, l] = global_w[m] + delta_w[m, l]`
-- `logits[b, l] = sum_m w_eff[m, l] * x[b, m, l] + bias[l]`
-
-Keep the global-weight stabilization (recommended to include in this experiment):
-- L2 anchor penalty to dataset init weights (Variant 6), optionally with softmax global weights (Variant 7).
-
-Change only the delta regularizer to a frequency-weighted L2:
-
-Let `freq[l] = number of positive training examples for label l` (from `y_train_true`).
-
-Define per-label weights, e.g.:
-
-- `alpha[l] = 1 / sqrt(freq[l] + 1)`
-
-Optionally normalize to keep the average penalty scale consistent:
-- `alpha = alpha / mean(alpha)`
-
-Then use:
-
-- `delta_l2 = mean_{m,l}( alpha[l] * delta_w[m,l]^2 )`
-- `loss_reg_delta = lambda_delta * delta_l2`
-
-(Keep bias regularization unchanged for this experiment to isolate the effect.)
-
-### Hypothesis
-
-- Frequent labels benefit from being allowed larger per-label mixture adjustments (closer to `torch_per_label` behavior).
-- Rare labels remain strongly regularized, reducing overfitting and preventing the “epoch 1 peak then degrade” failure mode.
-
-### Suggested sweep (small)
-
-Run this variant with global anchoring enabled and sweep only `lambda_delta` modestly:
-- `lambda_delta ∈ {1e-2, 3e-3, 1e-3, 3e-4}`
-
-### Notes for future result logging
-
-For each variant, we will eventually record:
-- Command used (dataset, lambda settings, any new hyperparameters like `delta_max`)
-- Best epoch selected by early stopping criterion
-- Train/Test metrics written to `SCOREBOARD.md`
-- Short qualitative notes (stability, runtime, failure modes)
-
-A simple template per run:
-
-- Variant:
-- Dataset:
-- Best epoch:
-- Train: NDCG@10 / NDCG@1000
-- Test:  NDCG@10 / NDCG@1000 / F1@5
-- Notes:
+## Future Directions
+
+1. **Prefer Low-Rank Coupling**: Move away from flattened MLPs. Use low-rank structure on top of strong linear priors.
+2. **Safety Rails for MLP**: If using MLPs, keep bounded gates, weight decay, and centering.
+3. **Refine Imbalance Handling**: Revisit `pos_weight` with gentler caps or apply only to active labels.
+4. **Sparsity Priors**: Explore stronger sparsity-inducing penalties (like L1 on deltas) for datasets like `koko`.
+5. **Truth-Active Only**: Restrict stage-2 corrections to labels seen in truth to reduce unintended long-tail perturbations.
