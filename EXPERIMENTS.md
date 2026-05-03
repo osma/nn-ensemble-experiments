@@ -27,6 +27,7 @@ This document centralizes the findings, analysis, and detailed experiment logs f
 
 ### 3. Controlled Extensions
 - **Global weights + per-label residuals + bias + explicit L2** is a robust template for extensions.
+- **Softmax global weights + Bias decomposition** (`bias_global + bias_delta`) is a powerful combination for cross-dataset robustness, particularly for `koko` and `yso-en`.
 - **Low-rank structure** can capture useful shared label structure when trained with careful regularization.
 
 ---
@@ -78,6 +79,10 @@ These models allow fully independent weights per label, often reparameterized fo
 | `bias_global_plus_delta` | Reparameterized bias into global + residual. | Neutral-to-slightly-positive. Low-risk change. |
 | `softmax_global_scale` | `s * softmax(g) + w_delta`. | **Top overall** by Avg Test Metrics. Recovers scale freedom. |
 | `softmax_global_l2_anchor` | Softmax + L2 anchor to init weights. | Neutral on `yso-fi`, worse on `yso-en`. Tie on `koko`. |
+| `elastic_anchor` (v1) | Softmax + Elastic Net (L1+L2) + L2 Anchor. | **Regression**. Over-regularized; `w_delta` frozen near zero. |
+| `elastic_anchor` (v2) | Softmax + L2 Delta + Bias Decomposition. | **Strong result (#4 Overall)**. #2 on Avg NDCG@1000. Excels on `koko` and `yso-en`. |
+
+> **Note on Elastic Anchor**: v1 failed because combining L1, L2, and a strong L2 anchor to initialization restricted per-label adaptation too much. v2 simplified this to just Softmax-constrained globals (acting as a "soft" anchor) and additive bias decomposition, which proved much more effective.
 
 ### 3. `torch_per_label_mlp` Family
 *Original source: PER_LABEL_MLP.md*
