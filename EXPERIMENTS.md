@@ -93,7 +93,8 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 
 | Variant | Description | Finding |
 |---------|-------------|---------|
-| `softmax_global_active_mlp` | End-to-end: Softmax global base + Active-label MLP. Uses multiplicative reweighting, tanh bounds, and centering. | **Strong result (#2 Overall)**. Safely integrates cross-label correlation without ranking collapse. Ties #1 model on Weighted Avg. |
+| `softmax_global_active_lowrank` | End-to-end: Softmax global base + Active-label Low-Rank Factorization (rank 64). Multiplicative reweighting, tanh bounds, centering. | **#1 Overall Model**. Successfully captures cross-label correlation via an efficient bottleneck. Outperforms the base and the MLP variant across datasets. |
+| `softmax_global_active_mlp` | End-to-end: Softmax global base + Active-label MLP. Uses multiplicative reweighting, tanh bounds, and centering. | **Strong result (#3 Overall)**. Safely integrates cross-label correlation without ranking collapse. Ties baseline model on Weighted Avg. |
 | `baseline` | Multiplicative: `base * (1 + gate * delta)`. | Safe but often a no-op on `yso-*`. |
 | `additive_delta` | `base + gate * delta`. | Regression on `yso-en` and `koko`. Perturbs low-confidence labels. |
 | `gate_per_label` | Per-active-label gate vector. | Regression on `koko`. Too many degrees of freedom. |
