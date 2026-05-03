@@ -82,6 +82,7 @@ These models allow fully independent weights per label, often reparameterized fo
 | `elastic_anchor` (v1) | Softmax + Elastic Net (L1+L2) + L2 Anchor. | **Regression**. Over-regularized; `w_delta` frozen near zero. |
 | `elastic_anchor` (v2) | Softmax + L2 Delta + Bias Decomposition. | **Strong result (#4 Overall)**. #2 on Avg NDCG@1000. |
 | `elastic_anchor` (v3) | Softmax + Bias Decomposition (no δ-L2). | **Improved #4 Overall (0.5338)**. Confirms soft constraints are better. |
+| `apex` | Softmax + Full Per-label Deltas + Strong L2 (1e-2) + No Global Bias. | Ranked high on `yso-fi` but regressed on `yso-en` and `koko`. Overall weighted average is 0.5315 (not in top 10). |
 
 > **Note on Elastic Anchor**: v1 failed because combining L1, L2, and a strong L2 anchor to initialization restricted per-label adaptation too much. v3 proved that removing explicit L2 on the weight residuals (matching the champion's settings) and using only a light bias shrinkage allows for the best performance while maintaining stability via the softmax global weights.
 

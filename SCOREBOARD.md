@@ -74,6 +74,9 @@
 | torch_per_label(bonsai,fasttext,mllm) | yso-en | 15 | 0.722371 | 0.814886 | 0.650776 | 0.764991 | 0.467200 |
 | torch_per_label(bonsai,fasttext,mllm) | yso-fi | 5 | 0.728346 | 0.824324 | 0.697123 | 0.806156 | 0.534772 |
 | torch_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.442077 | 0.558998 | 0.361336 | 0.473884 | 0.266223 |
+| torch_per_label_apex(bonsai,fasttext,mllm) | yso-en | 7 | 0.705346 | 0.804996 | 0.646978 | 0.765773 | 0.459256 |
+| torch_per_label_apex(bonsai,fasttext,mllm) | yso-fi | 5 | 0.724470 | 0.820458 | 0.697312 | 0.804652 | 0.536479 |
+| torch_per_label_apex(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 5 | 0.434240 | 0.557843 | 0.359000 | 0.476713 | 0.263887 |
 | torch_per_label_bias_global_plus_delta(bonsai,fasttext,mllm) | yso-en | 16 | 0.724260 | 0.816058 | 0.656047 | 0.768774 | 0.472266 |
 | torch_per_label_bias_global_plus_delta(bonsai,fasttext,mllm) | yso-fi | 5 | 0.728169 | 0.824068 | 0.695609 | 0.804951 | 0.535320 |
 | torch_per_label_bias_global_plus_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.440609 | 0.558307 | 0.361324 | 0.473755 | 0.265462 |
@@ -151,10 +154,10 @@
 | 4 | torch_per_label_softmax_global_scale | 0.683328 |
 | 5 | torch_mean_residual_softmax_global | 0.682992 |
 | 6 | torch_per_label_bias_global_plus_delta | 0.682493 |
-| 7 | torch_mean_residual_softmax_global_l2_anchor | 0.682120 |
-| 8 | torch_mean_residual_l2_anchor_global | 0.682116 |
-| 9 | torch_per_label_l1_delta | 0.681959 |
-| 10 | torch_per_label_mlp | 0.681847 |
+| 7 | torch_per_label_apex | 0.682379 |
+| 8 | torch_mean_residual_softmax_global_l2_anchor | 0.682120 |
+| 9 | torch_mean_residual_l2_anchor_global | 0.682116 |
+| 10 | torch_per_label_l1_delta | 0.681959 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
@@ -225,8 +228,8 @@
 | 3 | torch_per_label_l1_delta | 0.654861 |
 | 4 | torch_per_label_mlp | 0.654572 |
 | 5 | torch_mean_residual_lowrank_mix | 0.654449 |
-| 6 | torch_mean_residual_softmax_global | 0.654202 |
-| 7 | torch_per_label | 0.653989 |
-| 8 | torch_per_label_mlp_rank_bottleneck | 0.653989 |
-| 9 | torch_per_label_mlp_gate_per_label | 0.653988 |
-| 10 | torch_per_label_mlp_gate_per_sample | 0.653988 |
+| 6 | torch_per_label_apex | 0.654447 |
+| 7 | torch_mean_residual_softmax_global | 0.654202 |
+| 8 | torch_per_label | 0.653989 |
+| 9 | torch_per_label_mlp_rank_bottleneck | 0.653989 |
+| 10 | torch_per_label_mlp_gate_per_label | 0.653988 |
