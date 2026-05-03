@@ -29,10 +29,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
-from benchmarks.device import get_device
-from benchmarks.preprocessing import csr_to_log1p_tensor
-from benchmarks.metrics import load_csr, ndcg_at_k_dense, f1_at_k_dense, update_markdown_scoreboard
+from benchmarks.metrics import (
+    load_csr,
+    evaluate_model_batched,
+    update_markdown_scoreboard,
+)
+from benchmarks.preprocessing import SparseCSRDataset, log1p_transform
 
 
 def _tensor_stats_1d(t: torch.Tensor) -> dict[str, float]:
@@ -196,43 +198,7 @@ class MeanResidualSoftmaxGlobalL2AnchorEnsemble(nn.Module):
         return ((w - self.w0) ** 2).mean()
 
 
-def _sync_if_cuda() -> None:
-    if DEVICE.type == "cuda":
-        torch.cuda.synchronize()
-
-
-class _Timer:
-    def __init__(self):
-        self.t0: float | None = None
-        self.dt: float | None = None
-
-    def __enter__(self):
-        _sync_if_cuda()
-        self.t0 = time.perf_counter()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        _sync_if_cuda()
-        assert self.t0 is not None
-        self.dt = time.perf_counter() - self.t0
-
-
-def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
-    model.eval()
-    loader = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(x_cpu),
-        batch_size=EVAL_BATCH_SIZE,
-        shuffle=False,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
-
-    outs: list[torch.Tensor] = []
-    with torch.no_grad():
-        for (xb,) in loader:
-            xb = xb.to(DEVICE, non_blocking=True)
-            logits = model(xb)
-            outs.append(logits.detach().cpu())
-    return torch.cat(outs, dim=0)
+# (Removed csr_to_log1p_tensor, _Timer, and _predict_in_batches in favor of SparseCSRDataset and evaluate_model_batched)
 
 
 def main() -> None:
@@ -289,30 +255,30 @@ def main() -> None:
     print("Using device:", DEVICE)
     print("Loading training data...")
 
-    y_train_true = load_csr(str(truth_path(dataset, "train")))
-    train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in ensemble_keys]
+    n_samples_train = y_train_true.shape[0]
+    n_labels = int(y_train_true.shape[1])
+    n_models = len(train_preds)
 
-    # Keep X_train on CPU; move minibatches to GPU.
-    X_train = torch.stack([csr_to_log1p_tensor(p) for p in train_preds], dim=1)
+    # Datasets using SparseCSRDataset
+    train_ds = SparseCSRDataset(train_preds, y_train_true, stack_dim=0, transform=lambda xy: (log1p_transform(xy[0]), xy[1]))
+    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=TRAIN_BATCH_SIZE, shuffle=True, pin_memory=(DEVICE.type == "cuda"))
 
-    # Targets are binary; use dense float for BCEWithLogitsLoss.
-    Y_train = torch.from_numpy(y_train_true.toarray()).float()
+    full_train_ds = SparseCSRDataset(train_preds, stack_dim=0, transform=log1p_transform)
+    full_train_loader = torch.utils.data.DataLoader(full_train_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
-    # Fixed random subset for early stopping
     rng = np.random.default_rng(EARLY_STOP_SEED)
-    n_train = X_train.shape[0]
-    n_eval = min(EARLY_STOP_EVAL_ROWS, n_train)
-    train_eval_idx = rng.choice(n_train, size=n_eval, replace=False)
-    X_train_eval = X_train[train_eval_idx]
+    n_eval = min(EARLY_STOP_EVAL_ROWS, n_samples_train)
+    train_eval_idx = rng.choice(n_samples_train, size=n_eval, replace=False)
+    train_eval_preds = [p[train_eval_idx] for p in train_preds]
     y_train_true_eval = y_train_true[train_eval_idx]
+    train_eval_ds = SparseCSRDataset(train_eval_preds, stack_dim=0, transform=log1p_transform)
+    train_eval_loader = torch.utils.data.DataLoader(train_eval_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
     print("Loading test data...")
     y_test_true = load_csr(str(truth_path(dataset, "test")))
     test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in ensemble_keys]
-    X_test = torch.stack([csr_to_log1p_tensor(p) for p in test_preds], dim=1)
-
-    n_models = int(X_train.shape[1])
-    n_labels = int(X_train.shape[2])
+    test_ds = SparseCSRDataset(test_preds, stack_dim=0, transform=log1p_transform)
+    test_loader = torch.utils.data.DataLoader(test_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
     cfg = get_dataset_config(dataset)
     init_global: torch.Tensor | None = None
@@ -320,7 +286,7 @@ def main() -> None:
         init_global = torch.tensor(cfg.ensemble3_init_weights, dtype=torch.float32)
         if init_global.shape[0] != n_models:
             raise ValueError(
-                f"ensemble3_init_weights has length {init_global.shape[0]}, but X_train has n_models={n_models}."
+                f"ensemble3_init_weights has length {init_global.shape[0]}, but ensemble has n_models={n_models}."
             )
 
     model = MeanResidualSoftmaxGlobalL2AnchorEnsemble(
@@ -334,13 +300,7 @@ def main() -> None:
     )
     criterion = nn.BCEWithLogitsLoss()
 
-    train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
-    train_loader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=TRAIN_BATCH_SIZE,
-        shuffle=True,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
+    criterion = nn.BCEWithLogitsLoss()
 
     best_metric = float("-inf")
     best_epoch: int | None = None
@@ -352,41 +312,30 @@ def main() -> None:
     epochs_no_improve = 0
 
     for epoch in range(1, EPOCHS + 1):
-        model.train()
-        with _Timer() as t_train:
-            for xb, yb in train_loader:
-                xb = xb.to(DEVICE, non_blocking=True)
-                yb = yb.to(DEVICE, non_blocking=True)
+        epoch_t0 = time.perf_counter()
 
-                optimizer.zero_grad(set_to_none=True)
-                logits = model(xb)
-                loss_main = criterion(logits, yb)
-                loss_reg_delta = lambda_delta * model.delta_l2()
-                loss_reg_bias = lambda_bias * model.bias_l2()
-                loss_reg_global = LAMBDA_GLOBAL_L2 * model.global_anchor_l2()
-                loss_reg = loss_reg_delta + loss_reg_bias + loss_reg_global
-                loss = loss_main + loss_reg
-                loss.backward()
-                optimizer.step()
+        model.train()
+        for xb, yb in train_loader:
+            xb = xb.to(DEVICE, non_blocking=True)
+            yb = yb.to(DEVICE, non_blocking=True)
+
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(xb)
+            loss_main = criterion(logits, yb)
+            loss_reg_delta = lambda_delta * model.delta_l2()
+            loss_reg_bias = lambda_bias * model.bias_l2()
+            loss_reg_global = LAMBDA_GLOBAL_L2 * model.global_anchor_l2()
+            loss_reg = loss_reg_delta + loss_reg_bias + loss_reg_global
+            loss = loss_main + loss_reg
+            loss.backward()
+            optimizer.step()
 
         # --- Early stop metric: train subset NDCG@1000 ---
-        with _Timer() as t_pred_train:
-            train_scores_eval = _predict_in_batches(model, X_train_eval)
-        train_ndcg1000, _n_used_train_eval = ndcg_at_k_dense(
-            y_train_true_eval, train_scores_eval, k=1000
-        )
+        train_res_eval = evaluate_model_batched(model, train_eval_loader, y_train_true_eval, k_values=(1000,), device=DEVICE)
+        train_ndcg1000 = train_res_eval["ndcg@1000"]
 
-        # --- Test metrics (prototype: OK to compute each epoch) ---
-        with _Timer() as t_pred_test:
-            test_scores = _predict_in_batches(model, X_test)
-
-        test_metrics: dict[str, float] = {}
-        n_used_test: int | None = None
-        for k in K_VALUES:
-            ndcg, n_used_test = ndcg_at_k_dense(y_test_true, test_scores, k=k)
-            test_metrics[f"ndcg@{k}"] = ndcg
-        f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
-        test_metrics["f1@5"] = f1
+        # --- Test metrics ---
+        test_metrics = evaluate_model_batched(model, test_loader, y_test_true, k_values=K_VALUES, f1_k=5, device=DEVICE)
 
         diag = ""
         if print_delta or debug:
@@ -421,13 +370,16 @@ def main() -> None:
                 delta_w = model.delta_w.detach()
                 bias = model.bias.detach()
 
-                # Output distribution on the early-stop subset (to spot saturation / scale issues)
-                subset_scores = train_scores_eval.detach()
+            # Output distribution on the early-stop subset (to spot saturation / scale issues)
+            batch = next(iter(train_eval_loader))
+            xb_dbg = batch[0].to(DEVICE, non_blocking=True)
+            with torch.no_grad():
+                subset_logits = model(xb_dbg).detach().cpu()
 
             w_stats = _tensor_stats_1d(w_global)
             d_stats = _tensor_stats_all(delta_w)
             b_stats = _tensor_stats_1d(bias)
-            s_stats = _tensor_stats_all(subset_scores)
+            s_stats = _tensor_stats_all(subset_logits)
 
             extra = (
                 "\n"
@@ -450,9 +402,7 @@ def main() -> None:
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
             f"test_f1@5={test_metrics['f1@5']:.6f} | "
-            f"timing train={float(t_train.dt or 0.0):.3f}s "
-            f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
-            f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
+            f"total={time.perf_counter() - epoch_t0:.3f}s"
             f"{diag}"
             f"{extra}"
         )
@@ -463,17 +413,13 @@ def main() -> None:
             best_epoch = epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
-            # Full train metrics computed only at best snapshot
-            full_train_scores = _predict_in_batches(model, X_train)
-            best_train_metrics = {}
-            n_used_train_full: int | None = None
-            for k in K_VALUES:
-                ndcg, n_used_train_full = ndcg_at_k_dense(y_train_true, full_train_scores, k=k)
-                best_train_metrics[f"ndcg@{k}"] = ndcg
-            best_n_used_train = int(n_used_train_full or 0)
+            # Compute full train metrics only at best snapshot
+            best_train_metrics_res = evaluate_model_batched(model, full_train_loader, y_train_true, k_values=K_VALUES, device=DEVICE)
+            best_train_metrics = {k: v for k, v in best_train_metrics_res.items() if k.startswith("ndcg")}
+            best_n_used_train = int(best_train_metrics_res["n_used"])
 
             best_test_metrics = test_metrics.copy()
-            best_n_used_test = int(n_used_test or 0)
+            best_n_used_test = int(test_metrics["n_used"])
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1

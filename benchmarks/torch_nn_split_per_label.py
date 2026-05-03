@@ -42,7 +42,12 @@ from scipy.sparse import csr_matrix
 
 from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, truth_path
 from benchmarks.device import get_device
-from benchmarks.metrics import load_csr, ndcg_at_k_dense, f1_at_k_dense, update_markdown_scoreboard
+from benchmarks.metrics import (
+    load_csr,
+    evaluate_model_batched,
+    update_markdown_scoreboard,
+)
+from benchmarks.preprocessing import SparseCSRDataset, sqrt_transform
 
 DEVICE = get_device()
 
@@ -107,34 +112,7 @@ def _load_torch_per_label_checkpoint(path: str | Path, *, device: torch.device) 
     return {"weights": weights.to(device=device), "bias": bias.to(device=device)}
 
 
-def csr_to_sqrt_tensor(csr: csr_matrix) -> torch.Tensor:
-    """
-    Convert CSR predictions to a dense torch tensor with fixed sqrt preprocessing:
-        sqrt(clamp(x, 0))
-    """
-    x = torch.from_numpy(csr.toarray()).float()
-    return torch.sqrt(torch.clamp(x, min=0.0))
-
-
-def _sync_if_cuda() -> None:
-    if DEVICE.type == "cuda":
-        torch.cuda.synchronize()
-
-
-class _Timer:
-    def __init__(self):
-        self.t0: float | None = None
-        self.dt: float | None = None
-
-    def __enter__(self):
-        _sync_if_cuda()
-        self.t0 = time.perf_counter()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        _sync_if_cuda()
-        assert self.t0 is not None
-        self.dt = time.perf_counter() - self.t0
+# (Removed csr_to_sqrt_tensor, _Timer, and _predict_in_batches in favor of SparseCSRDataset and evaluate_model_batched)
 
 
 def _label_active_mask(y_train_true: csr_matrix, train_preds: list[csr_matrix]) -> np.ndarray:
@@ -333,43 +311,12 @@ class NNSplitPerLabelEnsembleModel(nn.Module):
         return out
 
 
-def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
-    model.eval()
-    loader = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(x_cpu),
-        batch_size=EVAL_BATCH_SIZE,
-        shuffle=False,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
-
-    outs: list[torch.Tensor] = []
-    with torch.no_grad():
-        for (xb,) in loader:
-            xb = xb.to(DEVICE, non_blocking=True)
-            out = model(xb)
-            outs.append(out.detach().cpu())
-    return torch.cat(outs, dim=0)
+# (Removed _predict_in_batches in favor of evaluate_model_batched)
 
 
 def _delta_stats(
-    model: NNSplitPerLabelEnsembleModel, x_cpu_subset: torch.Tensor
+    model: NNSplitPerLabelEnsembleModel, loader: torch.utils.data.DataLoader
 ) -> tuple[float, float]:
-    """
-    Compute mean(|delta|) and p95(|delta|) over a CPU subset.
-
-    Note: torch.quantile() can error on very large tensors (implementation limits).
-    We therefore compute p95 approximately by sampling a bounded number of elements.
-    """
-    if model.n_active == 0:
-        return 0.0, 0.0
-
-    model.eval()
-    loader = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(x_cpu_subset),
-        batch_size=EVAL_BATCH_SIZE,
-        shuffle=False,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
 
     sum_abs = 0.0
     n_abs = 0
@@ -378,8 +325,10 @@ def _delta_stats(
     samples: list[torch.Tensor] = []
 
     with torch.no_grad():
-        for (xb_cpu,) in loader:
-            xb = xb_cpu.to(DEVICE, non_blocking=True)
+        for xb in loader:
+            if isinstance(xb, (list, tuple)):
+                xb = xb[0]
+            xb = xb.to(DEVICE, non_blocking=True)
             x_active = xb.index_select(dim=2, index=model.active_idx)
 
             x = model.flatten(x_active)
@@ -497,22 +446,32 @@ def main() -> None:
         )
     )
 
-    X_train = torch.stack([csr_to_sqrt_tensor(p) for p in train_preds], dim=1)
-    Y_train = torch.from_numpy(y_train_true.toarray()).float()
+    n_samples_train = y_train_true.shape[0]
+    n_labels = int(y_train_true.shape[1])
+    n_models = len(train_preds)
+
+    # Datasets using SparseCSRDataset
+    train_ds = SparseCSRDataset(train_preds, y_train_true, stack_dim=0, transform=lambda xy: (sqrt_transform(xy[0]), xy[1]))
+    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=TRAIN_BATCH_SIZE, shuffle=True, pin_memory=(DEVICE.type == "cuda"))
+
+    full_train_ds = SparseCSRDataset(train_preds, stack_dim=0, transform=sqrt_transform)
+    full_train_loader = torch.utils.data.DataLoader(full_train_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
     rng = np.random.default_rng(EARLY_STOP_SEED)
-    n_train = int(X_train.shape[0])
-    n_eval = min(EARLY_STOP_EVAL_ROWS, n_train)
-    train_eval_idx = rng.choice(n_train, size=n_eval, replace=False)
-    X_train_eval = X_train[train_eval_idx]
+    n_eval = min(EARLY_STOP_EVAL_ROWS, n_samples_train)
+    train_eval_idx = rng.choice(n_samples_train, size=n_eval, replace=False)
+    train_eval_preds = [p[train_eval_idx] for p in train_preds]
     y_train_true_eval = y_train_true[train_eval_idx]
+    train_eval_ds = SparseCSRDataset(train_eval_preds, stack_dim=0, transform=sqrt_transform)
+    train_eval_loader = torch.utils.data.DataLoader(train_eval_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
     print("Loading test data...")
     y_test_true = load_csr(str(truth_path(dataset, "test")))
     test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in e3]
-    X_test = torch.stack([csr_to_sqrt_tensor(p) for p in test_preds], dim=1)
+    test_ds = SparseCSRDataset(test_preds, stack_dim=0, transform=sqrt_transform)
+    test_loader = torch.utils.data.DataLoader(test_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
-    n_models = int(X_train.shape[1])
+    n_models = len(train_preds)
     if n_models != 3:
         raise ValueError(f"Expected 3-way ensemble input (M=3), got M={n_models}")
 
@@ -543,14 +502,6 @@ def main() -> None:
     )
     criterion = nn.BCELoss()
 
-    train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
-    train_loader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=TRAIN_BATCH_SIZE,
-        shuffle=True,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
-
     best_metric = float("-inf")
     best_epoch: int | None = None
     best_state: dict[str, torch.Tensor] | None = None
@@ -561,37 +512,25 @@ def main() -> None:
     epochs_no_improve = 0
 
     for epoch in range(1, EPOCHS + 1):
+        epoch_t0 = time.perf_counter()
         model.train()
-        with _Timer() as t_train:
-            last_loss: float | None = None
-            for xb, yb in train_loader:
-                xb = xb.to(DEVICE, non_blocking=True)
-                yb = yb.to(DEVICE, non_blocking=True)
+        last_loss: float | None = None
+        for xb, yb in train_loader:
+            xb = xb.to(DEVICE, non_blocking=True)
+            yb = yb.to(DEVICE, non_blocking=True)
 
-                optimizer.zero_grad(set_to_none=True)
-                out = model(xb)
-                loss = criterion(out, yb)
-                loss.backward()
-                optimizer.step()
-                last_loss = float(loss.item())
+            optimizer.zero_grad(set_to_none=True)
+            out = model(xb)
+            loss = criterion(out, yb)
+            loss.backward()
+            optimizer.step()
+            last_loss = float(loss.item())
 
-        with _Timer() as t_pred_train:
-            train_scores_eval = _predict_in_batches(model, X_train_eval)
-        train_ndcg1000, _n_used_train_eval = ndcg_at_k_dense(
-            y_train_true_eval, train_scores_eval, k=1000
-        )
-        train_ndcg10, _ = ndcg_at_k_dense(y_train_true_eval, train_scores_eval, k=10)
+        train_res_eval = evaluate_model_batched(model, train_eval_loader, y_train_true_eval, k_values=(10, 1000), device=DEVICE)
+        train_ndcg1000 = train_res_eval["ndcg@1000"]
+        train_ndcg10 = train_res_eval["ndcg@10"]
 
-        with _Timer() as t_pred_test:
-            test_scores = _predict_in_batches(model, X_test)
-
-        test_metrics: dict[str, float] = {}
-        n_used_test: int | None = None
-        for k in K_VALUES:
-            ndcg, n_used_test = ndcg_at_k_dense(y_test_true, test_scores, k=k)
-            test_metrics[f"ndcg@{k}"] = ndcg
-        f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
-        test_metrics["f1@5"] = f1
+        test_metrics = evaluate_model_batched(model, test_loader, y_test_true, k_values=K_VALUES, f1_k=5, device=DEVICE)
 
         with torch.no_grad():
             conv_w = (
@@ -602,7 +541,7 @@ def main() -> None:
                 .tolist()
             )
         scale_mean, scale_p95, scale_max = _scale_stats(model)
-        delta_mean_abs, delta_p95_abs = _delta_stats(model, X_train_eval)
+        delta_mean_abs, delta_p95_abs = _delta_stats(model, train_eval_loader)
 
         print(
             f"Epoch {epoch:02d} | "
@@ -615,9 +554,7 @@ def main() -> None:
             f"conv_w={','.join(f'{w:.4f}' for w in conv_w)} | "
             f"scale mean={scale_mean:.4f} p95={scale_p95:.4f} max={scale_max:.4f} | "
             f"delta|x| mean={delta_mean_abs:.6f} p95={delta_p95_abs:.6f} | "
-            f"timing train={float(t_train.dt or 0.0):.3f}s "
-            f"pred_train={float(t_pred_train.dt or 0.0):.3f}s "
-            f"pred_test={float(t_pred_test.dt or 0.0):.3f}s"
+            f"total={time.perf_counter() - epoch_t0:.3f}s"
         )
 
         current = float(train_ndcg1000)
@@ -626,16 +563,12 @@ def main() -> None:
             best_epoch = epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
-            full_train_scores = _predict_in_batches(model, X_train)
-            best_train_metrics = {}
-            n_used_train_full: int | None = None
-            for k in K_VALUES:
-                ndcg, n_used_train_full = ndcg_at_k_dense(y_train_true, full_train_scores, k=k)
-                best_train_metrics[f"ndcg@{k}"] = ndcg
-            best_n_used_train = int(n_used_train_full or 0)
+            best_train_metrics_res = evaluate_model_batched(model, full_train_loader, y_train_true, k_values=K_VALUES, device=DEVICE)
+            best_train_metrics = {k: v for k, v in best_train_metrics_res.items() if k.startswith("ndcg")}
+            best_n_used_train = int(best_train_metrics_res["n_used"])
 
             best_test_metrics = test_metrics.copy()
-            best_n_used_test = int(n_used_test or 0)
+            best_n_used_test = int(test_metrics["n_used"])
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1

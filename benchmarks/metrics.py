@@ -210,6 +210,112 @@ def f1_at_k_dense(
     return float(np.mean(f1s)), len(f1s)
 
 
+def evaluate_model_batched(
+    model: torch.nn.Module,
+    loader: torch.utils.data.DataLoader,
+    y_true: csr_matrix,
+    k_values: tuple[int, ...] = (10, 1000),
+    f1_k: int = 5,
+    device: torch.device | None = None,
+) -> dict[str, float]:
+    """
+    Evaluate a model on a dataset using a DataLoader, computing metrics in batches
+    to avoid creating a single massive dense tensor of predictions.
+
+    Args:
+        model: The PyTorch model to evaluate.
+        loader: A DataLoader providing batches of (x,) or (x, y).
+                MUST be non-shuffled and cover the full dataset in order.
+        y_true: The ground truth CSR matrix.
+        k_values: NDCG@k values to compute.
+        f1_k: F1@k value to compute.
+        device: Device to run evaluation on.
+
+    Returns:
+        Dictionary of metrics (e.g. {"ndcg@10": 0.5, "f1@5": 0.4, "n_used": 1234})
+    """
+    model.eval()
+    if device is None:
+        # Infer device from model parameters
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
+
+    true_idx_list = _csr_row_indices_list(y_true)
+
+    ndcgs: dict[int, list[float]] = {k: [] for k in k_values}
+    f1s: list[float] = []
+
+    row_offset = 0
+    with torch.no_grad():
+        for batch in loader:
+            if isinstance(batch, (list, tuple)):
+                xb = batch[0]
+            else:
+                xb = batch
+
+            xb = xb.to(device, non_blocking=True)
+            y_score = model(xb)  # (batch, L)
+
+            batch_size = y_score.shape[0]
+
+            # NDCG@k
+            for k in k_values:
+                k_eff = min(k, y_score.shape[1])
+                # Do topk on device then move to CPU
+                topk_idx = torch.topk(
+                    y_score, k=k_eff, dim=1, largest=True, sorted=True
+                ).indices
+                topk_idx_np = topk_idx.cpu().numpy()
+                discounts = 1.0 / np.log2(np.arange(2, k_eff + 2))
+
+                for i in range(batch_size):
+                    true_idx = true_idx_list[row_offset + i]
+                    if true_idx.size == 0:
+                        continue
+
+                    ranked = topk_idx_np[i]
+                    rel = np.isin(ranked, true_idx).astype(np.float64)
+                    dcg = float(np.sum(rel * discounts))
+                    ideal_len = min(true_idx.size, k_eff)
+                    idcg = float(np.sum(discounts[:ideal_len]))
+                    ndcgs[k].append(dcg / idcg)
+
+            # F1@k
+            k_eff_f1 = min(f1_k, y_score.shape[1])
+            topk_idx_f1 = torch.topk(
+                y_score, k=k_eff_f1, dim=1, largest=True, sorted=False
+            ).indices
+            topk_idx_f1_np = topk_idx_f1.cpu().numpy()
+
+            for i in range(batch_size):
+                true_idx = true_idx_list[row_offset + i]
+                if true_idx.size == 0:
+                    continue
+
+                pred = topk_idx_f1_np[i]
+                tp = int(np.intersect1d(pred, true_idx, assume_unique=False).size)
+                if tp == 0:
+                    f1s.append(0.0)
+                else:
+                    fp = int(k_eff_f1 - tp)
+                    fn = int(true_idx.size - tp)
+                    f1s.append((2.0 * tp) / (2.0 * tp + fp + fn))
+
+            row_offset += batch_size
+
+    results = {}
+    for k in k_values:
+        if ndcgs[k]:
+            results[f"ndcg@{k}"] = float(np.mean(ndcgs[k]))
+    if f1s:
+        results[f"f1@{f1_k}"] = float(np.mean(f1s))
+
+    results["n_used"] = float(len(f1s))
+    return results
+
+
 def _parse_float(v: str) -> float:
     try:
         return float(v)

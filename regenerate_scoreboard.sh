@@ -96,7 +96,12 @@ cache_path() {
   ds="$2"
   dh="$(dataset_hash "$ds")"
   sh="$(script_hash "$m")"
-  echo "$CACHE_DIR/$CACHE_VER--$m--$ds--$dh--$sh.metrics"
+  # Hash all components into a single short string to avoid filesystem length limits.
+  # We keep the model and dataset names in the prefix for easier manual inspection if needed.
+  full_key="$CACHE_VER--$m--$ds--$dh--$sh"
+  kh="$(printf "%s" "$full_key" | sha256sum | awk '{print $1}')"
+  m_short="$(printf "%s" "$m" | cut -c1-16)"
+  echo "$CACHE_DIR/v3--${m_short}--${ds}--${kh}.metrics"
 }
 
 apply_cached_metrics() {

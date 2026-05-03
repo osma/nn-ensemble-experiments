@@ -19,10 +19,10 @@ from benchmarks.datasets import ensemble3_keys, get_dataset_config, pred_path, t
 from benchmarks.device import get_device
 from benchmarks.metrics import (
     load_csr,
-    ndcg_at_k_dense,
-    f1_at_k_dense,
+    evaluate_model_batched,
     update_markdown_scoreboard,
 )
+from benchmarks.preprocessing import SparseCSRDataset, log1p_transform
 
 
 class PerLabelWeightedEnsemble(nn.Module):
@@ -127,68 +127,25 @@ TRAIN_SEED = 0
 # as `ensemble3_init_weights` and consumed below.
 
 
-def csr_to_dense_tensor(csr):
-    x = torch.from_numpy(csr.toarray()).float()
-    return torch.log1p(torch.clamp(x, min=0.0))
-
-
-def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
-    return csr_matrix(t.detach().cpu().numpy())
-
-
-def _sync_if_cuda() -> None:
-    if DEVICE.type == "cuda":
-        torch.cuda.synchronize()
-
-
-class _Timer:
-    def __init__(self):
-        self.t0: float | None = None
-        self.dt: float | None = None
-
-    def __enter__(self):
-        _sync_if_cuda()
-        self.t0 = time.perf_counter()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        _sync_if_cuda()
-        assert self.t0 is not None
-        self.dt = time.perf_counter() - self.t0
-
-
-def _predict_in_batches(model: torch.nn.Module, x_cpu: torch.Tensor) -> torch.Tensor:
-    model.eval()
-    loader = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(x_cpu),
-        batch_size=EVAL_BATCH_SIZE,
-        shuffle=False,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
-
-    outs: list[torch.Tensor] = []
-    with torch.no_grad():
-        for (xb,) in loader:
-            xb = xb.to(DEVICE, non_blocking=True)
-            logits = model(xb)
-            outs.append(logits.detach().cpu())
-    return torch.cat(outs, dim=0)
+# (Removed csr_to_dense_tensor and _predict_in_batches in favor of SparseCSRDataset and evaluate_model_batched)
 
 
 def train_and_evaluate(
     *,
     dataset: str,
-    ensemble_keys: tuple[str, str, str],
+    ensemble_keys: tuple[str, ...],
     lr: float,
     weight_decay: float,
     batch_size: int,
-    X_train: torch.Tensor,
-    Y_train: torch.Tensor,
+    train_loader: torch.utils.data.DataLoader,
     y_train_true: csr_matrix,
-    X_train_eval: torch.Tensor,
+    train_eval_loader: torch.utils.data.DataLoader,
     y_train_true_eval: csr_matrix,
-    X_test: torch.Tensor,
+    test_loader: torch.utils.data.DataLoader,
     y_test_true: csr_matrix,
+    full_train_loader: torch.utils.data.DataLoader,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
 ) -> dict[str, object]:
     """
     Train a model with given hyperparameters and return the best snapshot
@@ -210,51 +167,25 @@ def train_and_evaluate(
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
 
+    # Determine dimensions from model
+    if hasattr(model, "n_models"):
+        n_models = model.n_models
+    else:
+        # Fallback if not standard
+        n_models = len(ensemble_keys)
+    
+    if hasattr(model, "n_labels"):
+        n_labels = model.n_labels
+    else:
+        n_labels = y_train_true.shape[1]
+
     # Make each run deterministic-ish (init + dataloader shuffle)
     torch.manual_seed(TRAIN_SEED)
     if DEVICE.type == "cuda":
         torch.cuda.manual_seed_all(TRAIN_SEED)
 
-    n_models = X_train.shape[1]
-    n_labels = X_train.shape[2]
-
-    init_weights: torch.Tensor | None = None
-    cfg = get_dataset_config(dataset)
-    if cfg.ensemble3 != ensemble_keys:
-        raise ValueError(
-            "Internal error: ensemble_keys does not match dataset config "
-            f"(cfg.ensemble3={cfg.ensemble3}, ensemble_keys={ensemble_keys})"
-        )
-    if cfg.ensemble3_init_weights is not None:
-        init_weights = torch.tensor(cfg.ensemble3_init_weights, dtype=torch.float32)
-        if init_weights.shape[0] != n_models:
-            raise ValueError(
-                f"ensemble3_init_weights has length {init_weights.shape[0]}, but X_train has n_models={n_models}."
-            )
-
-    model = PerLabelWeightedEnsemble(
-        n_models=n_models,
-        n_labels=n_labels,
-        init_model_weights=init_weights,
-    ).to(DEVICE)
-
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=lr,
-        weight_decay=weight_decay,
-        eps=1e-8,
-    )
-
     # Unweighted BCE performs best for NDCG in this setup
     criterion = nn.BCEWithLogitsLoss()
-
-    train_ds = torch.utils.data.TensorDataset(X_train, Y_train)
-    train_loader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        pin_memory=(DEVICE.type == "cuda"),
-    )
 
     best_metric = float("-inf")
     best_epoch: int | None = None
@@ -275,49 +206,35 @@ def train_and_evaluate(
         epoch_t0 = time.perf_counter()
 
         model.train()
-        with _Timer() as t_train_step:
-            for xb, yb in train_loader:
-                xb = xb.to(DEVICE, non_blocking=True)
-                yb = yb.to(DEVICE, non_blocking=True)
+        t_train_step_start = time.perf_counter()
+        for xb, yb in train_loader:
+            xb = xb.to(DEVICE, non_blocking=True)
+            yb = yb.to(DEVICE, non_blocking=True)
 
-                optimizer.zero_grad()
-                logits = model(xb)
-                loss = criterion(logits, yb)
-                loss.backward()
-                optimizer.step()
-        t_total_train_step += float(t_train_step.dt or 0.0)
+            optimizer.zero_grad()
+            logits = model(xb)
+            loss = criterion(logits, yb)
+            loss.backward()
+            optimizer.step()
+        t_total_train_step += time.perf_counter() - t_train_step_start
 
         # --- Train evaluation for early stopping (subset only) ---
-        with _Timer() as t_pred_train:
-            train_scores_eval = _predict_in_batches(model, X_train_eval)
-        t_total_pred_train += float(t_pred_train.dt or 0.0)
+        t_metric_train_start = time.perf_counter()
+        train_res_eval = evaluate_model_batched(
+            model, train_eval_loader, y_train_true_eval, k_values=(1000,), device=DEVICE
+        )
+        train_ndcg1000 = train_res_eval["ndcg@1000"]
+        t_total_pred_train += time.perf_counter() - t_metric_train_start
 
-        with _Timer() as t_metric_train:
-            train_ndcg1000, _n_used_train_eval = ndcg_at_k_dense(
-                y_train_true_eval, train_scores_eval, k=1000
-            )
-        t_total_metrics += float(t_metric_train.dt or 0.0)
-
-        # --- Test evaluation (batched; no CSR conversion) ---
-        with _Timer() as t_pred_test:
-            test_scores = _predict_in_batches(model, X_test)
-        t_total_pred_test += float(t_pred_test.dt or 0.0)
-
-        test_metrics: dict[str, float] = {}
-        n_used_test: int | None = None
-        with _Timer() as t_metric_test:
-            for k in K_VALUES:
-                ndcg, n_used_test = ndcg_at_k_dense(y_test_true, test_scores, k=k)
-                test_metrics[f"ndcg@{k}"] = ndcg
-
-            f1, _ = f1_at_k_dense(y_test_true, test_scores, k=5)
-            test_metrics["f1@5"] = f1
-        t_total_metrics += float(t_metric_test.dt or 0.0)
+        # --- Test evaluation ---
+        t_metric_test_start = time.perf_counter()
+        test_metrics = evaluate_model_batched(
+            model, test_loader, y_test_true, k_values=K_VALUES, f1_k=5, device=DEVICE
+        )
+        t_total_pred_test += time.perf_counter() - t_metric_test_start
+        t_total_metrics += (time.perf_counter() - t_metric_train_start) # Rough aggregate
 
         epoch_dt = time.perf_counter() - epoch_t0
-
-        def _dt(timer: _Timer) -> float:
-            return float(timer.dt) if timer.dt is not None else 0.0
 
         print(
             f"[lr={lr:g} wd={weight_decay:g} bs={batch_size}] "
@@ -326,8 +243,6 @@ def train_and_evaluate(
             f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
             f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
             f"test_f1@5={test_metrics['f1@5']:.6f} | "
-            f"timing train_step={_dt(t_train_step):.3f}s pred_train={_dt(t_pred_train):.3f}s "
-            f"pred_test={_dt(t_pred_test):.3f}s metrics={_dt(t_metric_train)+_dt(t_metric_test):.3f}s "
             f"total={epoch_dt:.3f}s"
         )
 
@@ -338,18 +253,16 @@ def train_and_evaluate(
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
             # Compute full train metrics only for the best epoch snapshot
-            full_train_scores = _predict_in_batches(model, X_train)
-            best_train_metrics = {}
-            n_used_train_full: int | None = None
-            for k in K_VALUES:
-                ndcg, n_used_train_full = ndcg_at_k_dense(
-                    y_train_true, full_train_scores, k=k
-                )
-                best_train_metrics[f"ndcg@{k}"] = ndcg
-            best_n_used_train = int(n_used_train_full or 0)
+            best_train_metrics_res = evaluate_model_batched(
+                model, full_train_loader, y_train_true, k_values=K_VALUES, device=DEVICE
+            )
+            best_train_metrics = {
+                k: v for k, v in best_train_metrics_res.items() if k.startswith("ndcg")
+            }
+            best_n_used_train = int(best_train_metrics_res["n_used"])
 
             best_test_metrics = test_metrics.copy()
-            best_n_used_test = int(n_used_test or 0)
+            best_n_used_test = int(test_metrics["n_used"])
 
             # ---- Best-epoch diagnostics (weights + bias distributions) ----
             with torch.no_grad():
@@ -468,28 +381,49 @@ def main():
     y_train_true = load_csr(str(truth_path(dataset, "train")))
     train_preds = [load_csr(str(pred_path(dataset, "train", k))) for k in ensemble_keys]
 
-    # Keep X_train on CPU; move only minibatches to GPU.
-    X_train = torch.stack([csr_to_dense_tensor(p) for p in train_preds], dim=1)
+    n_samples_train = y_train_true.shape[0]
+    n_labels = y_train_true.shape[1]
+    n_models = len(train_preds)
 
-    # Keep Y_train on CPU (requested).
-    Y_train = csr_to_dense_tensor(y_train_true)
+    init_weights: torch.Tensor | None = None
+    cfg = get_dataset_config(dataset)
+    if cfg.ensemble3 != ensemble_keys:
+        raise ValueError("Internal error: ensemble_keys mismatch")
 
-    # Fixed random subset of train rows for per-epoch early stopping metric
+    if cfg.ensemble3_init_weights is not None:
+        init_weights = torch.tensor(cfg.ensemble3_init_weights, dtype=torch.float32)
+
+    model = PerLabelWeightedEnsemble(
+        n_models=n_models,
+        n_labels=n_labels,
+        init_model_weights=init_weights,
+    ).to(DEVICE)
+
+    optimizer = optim.AdamW(model.parameters(), lr=BEST_LR, weight_decay=BEST_WEIGHT_DECAY)
+
+    # Datasets using SparseCSRDataset
+    train_ds = SparseCSRDataset(train_preds, y_train_true, stack_dim=0, transform=lambda xy: (log1p_transform(xy[0]), xy[1]))
+    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=BEST_BATCH_SIZE, shuffle=True, pin_memory=(DEVICE.type == "cuda"))
+
+    # Evaluation loaders (non-shuffled)
+    full_train_eval_ds = SparseCSRDataset(train_preds, stack_dim=0, transform=log1p_transform)
+    full_train_loader = torch.utils.data.DataLoader(full_train_eval_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
+
     rng = np.random.default_rng(EARLY_STOP_SEED)
-    n_train = X_train.shape[0]
-    n_eval = min(EARLY_STOP_EVAL_ROWS, n_train)
-    train_eval_idx = rng.choice(n_train, size=n_eval, replace=False)
-    X_train_eval = X_train[train_eval_idx]
+    n_eval = min(EARLY_STOP_EVAL_ROWS, n_samples_train)
+    train_eval_idx = rng.choice(n_samples_train, size=n_eval, replace=False)
+    
+    # For subset evaluation, we can just use a subset of the CSR matrices
+    train_eval_preds = [p[train_eval_idx] for p in train_preds]
     y_train_true_eval = y_train_true[train_eval_idx]
+    train_eval_ds = SparseCSRDataset(train_eval_preds, stack_dim=0, transform=log1p_transform)
+    train_eval_loader = torch.utils.data.DataLoader(train_eval_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
     print("Loading test data...")
-
-    # Keep y_test_true / Y_test on CPU (requested).
     y_test_true = load_csr(str(truth_path(dataset, "test")))
     test_preds = [load_csr(str(pred_path(dataset, "test", k))) for k in ensemble_keys]
-
-    # Keep X_test on CPU; move to GPU only for evaluation forward pass.
-    X_test = torch.stack([csr_to_dense_tensor(p) for p in test_preds], dim=1)
+    test_ds = SparseCSRDataset(test_preds, stack_dim=0, transform=log1p_transform)
+    test_loader = torch.utils.data.DataLoader(test_ds, batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
     print(
         "Training with best hyperparameters | "
@@ -502,13 +436,15 @@ def main():
         lr=BEST_LR,
         weight_decay=BEST_WEIGHT_DECAY,
         batch_size=BEST_BATCH_SIZE,
-        X_train=X_train,
-        Y_train=Y_train,
+        train_loader=train_loader,
         y_train_true=y_train_true,
-        X_train_eval=X_train_eval,
+        train_eval_loader=train_eval_loader,
         y_train_true_eval=y_train_true_eval,
-        X_test=X_test,
+        test_loader=test_loader,
         y_test_true=y_test_true,
+        full_train_loader=full_train_loader,
+        model=model,
+        optimizer=optimizer,
     )
 
     best_epoch = int(result["best_epoch"])

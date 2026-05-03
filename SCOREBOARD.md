@@ -27,7 +27,7 @@
 | torch_lowrank_residual_epsclamp(bonsai,fasttext,mllm) | yso-fi | 20 | 0.756034 | 0.838082 | 0.696430 | 0.786967 | 0.529307 |
 | torch_lowrank_residual_epsclamp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.454791 | 0.548610 | 0.364144 | 0.438432 | 0.267507 |
 | torch_lowrank_residual_mix_temp(bonsai,fasttext,mllm) | yso-en | 20 | 0.747455 | 0.823615 | 0.655750 | 0.738232 | 0.463115 |
-| torch_lowrank_residual_mix_temp(bonsai,fasttext,mllm) | yso-fi | 20 | 0.756853 | 0.837086 | 0.694785 | 0.785086 | 0.527698 |
+| torch_lowrank_residual_mix_temp(bonsai,fasttext,mllm) | yso-fi | 20 | 0.756740 | 0.837466 | 0.695460 | 0.785514 | 0.528406 |
 | torch_lowrank_residual_mix_temp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 13 | 0.465222 | 0.555876 | 0.363119 | 0.430717 | 0.268176 |
 | torch_mean(bonsai,fasttext,mllm) | yso-en | 1 | 0.684793 | 0.795369 | 0.601542 | 0.738840 | 0.421134 |
 | torch_mean(bonsai,fasttext,mllm) | yso-fi | 3 | 0.711586 | 0.812470 | 0.679727 | 0.796308 | 0.517343 |
@@ -68,14 +68,14 @@
 | torch_nn_split(bonsai,fasttext,mllm) | yso-en | 12 | 0.746666 | 0.824106 | 0.617811 | 0.714514 | 0.432653 |
 | torch_nn_split(bonsai,fasttext,mllm) | yso-fi | 12 | 0.764292 | 0.839745 | 0.691875 | 0.768785 | 0.527237 |
 | torch_nn_split(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 12 | 0.534741 | 0.629276 | 0.378951 | 0.444978 | 0.279118 |
-| torch_nn_split_per_label(bonsai,fasttext,mllm) | yso-en | 12 | 0.790678 | 0.854107 | 0.661751 | 0.743532 | 0.463044 |
-| torch_nn_split_per_label(bonsai,fasttext,mllm) | yso-fi | 12 | 0.785900 | 0.860110 | 0.709825 | 0.785869 | 0.539094 |
-| torch_nn_split_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 12 | 0.551779 | 0.644473 | 0.381411 | 0.447886 | 0.280445 |
-| torch_per_label(bonsai,fasttext,mllm) | yso-en | 15 | 0.724006 | 0.815469 | 0.659227 | 0.771079 | 0.473627 |
-| torch_per_label(bonsai,fasttext,mllm) | yso-fi | 5 | 0.725988 | 0.823065 | 0.710171 | 0.816454 | 0.544132 |
-| torch_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.439253 | 0.555085 | 0.361643 | 0.473905 | 0.264727 |
+| torch_nn_split_per_label(bonsai,fasttext,mllm) | yso-en | 12 | 0.784181 | 0.848789 | 0.648981 | 0.732718 | 0.458613 |
+| torch_nn_split_per_label(bonsai,fasttext,mllm) | yso-fi | 12 | 0.779001 | 0.853775 | 0.696663 | 0.775173 | 0.531756 |
+| torch_nn_split_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 12 | 0.544597 | 0.640002 | 0.376592 | 0.446252 | 0.276799 |
+| torch_per_label(bonsai,fasttext,mllm) | yso-en | 15 | 0.722371 | 0.814886 | 0.650776 | 0.764991 | 0.467200 |
+| torch_per_label(bonsai,fasttext,mllm) | yso-fi | 5 | 0.728346 | 0.824324 | 0.697123 | 0.806156 | 0.534772 |
+| torch_per_label(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.442077 | 0.558998 | 0.361336 | 0.473884 | 0.266223 |
 | torch_per_label_bias_global_plus_delta(bonsai,fasttext,mllm) | yso-en | 16 | 0.724260 | 0.816058 | 0.656047 | 0.768774 | 0.472266 |
-| torch_per_label_bias_global_plus_delta(bonsai,fasttext,mllm) | yso-fi | 5 | 0.726868 | 0.823613 | 0.708647 | 0.815643 | 0.544540 |
+| torch_per_label_bias_global_plus_delta(bonsai,fasttext,mllm) | yso-fi | 5 | 0.728169 | 0.824068 | 0.695609 | 0.804951 | 0.535320 |
 | torch_per_label_bias_global_plus_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.440609 | 0.558307 | 0.361324 | 0.473755 | 0.265462 |
 | torch_per_label_global_plus_delta(bonsai,fasttext,mllm) | yso-en | 3 | 0.702425 | 0.801179 | 0.635216 | 0.758246 | 0.449534 |
 | torch_per_label_global_plus_delta(bonsai,fasttext,mllm) | yso-fi | 2 | 0.707021 | 0.809255 | 0.692057 | 0.803521 | 0.524475 |
@@ -87,7 +87,7 @@
 | torch_per_label_l1_delta(bonsai,fasttext,mllm) | yso-fi | 5 | 0.723691 | 0.820476 | 0.698256 | 0.806495 | 0.535650 |
 | torch_per_label_l1_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.440279 | 0.558067 | 0.361038 | 0.474321 | 0.266237 |
 | torch_per_label_mlp(bonsai,fasttext,mllm) | yso-en | 1 | 0.722371 | 0.814921 | 0.650776 | 0.764912 | 0.467200 |
-| torch_per_label_mlp(bonsai,fasttext,mllm) | yso-fi | 6 | 0.728348 | 0.824308 | 0.697123 | 0.806150 | 0.534772 |
+| torch_per_label_mlp(bonsai,fasttext,mllm) | yso-fi | 3 | 0.737340 | 0.831555 | 0.698582 | 0.806576 | 0.534560 |
 | torch_per_label_mlp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.442098 | 0.559631 | 0.361286 | 0.474052 | 0.266288 |
 | torch_per_label_mlp_additive_delta(bonsai,fasttext,mllm) | yso-en | 2 | 0.722825 | 0.815386 | 0.650038 | 0.762893 | 0.466016 |
 | torch_per_label_mlp_additive_delta(bonsai,fasttext,mllm) | yso-fi | 1 | 0.728276 | 0.824303 | 0.697128 | 0.805955 | 0.534772 |
@@ -110,15 +110,15 @@
 | torch_per_label_residual_lowrank_mix_active(bonsai,fasttext,mllm) | yso-en | 1 | 0.722495 | 0.808272 | 0.651005 | 0.758634 | 0.466942 |
 | torch_per_label_residual_lowrank_mix_active(bonsai,fasttext,mllm) | yso-fi | 1 | 0.728239 | 0.822888 | 0.697189 | 0.804671 | 0.534990 |
 | torch_per_label_residual_lowrank_mix_active(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.442085 | 0.528383 | 0.361227 | 0.444598 | 0.266173 |
-| torch_per_label_softmax_global(bonsai,fasttext,mllm) | yso-en | 14 | 0.722818 | 0.816320 | 0.661455 | 0.776412 | 0.474309 |
-| torch_per_label_softmax_global(bonsai,fasttext,mllm) | yso-fi | 4 | 0.722948 | 0.820679 | 0.704736 | 0.813194 | 0.540867 |
-| torch_per_label_softmax_global(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.439349 | 0.557344 | 0.363673 | 0.477691 | 0.266434 |
+| torch_per_label_softmax_global(bonsai,fasttext,mllm) | yso-en | 10 | 0.712864 | 0.808071 | 0.655809 | 0.770418 | 0.467638 |
+| torch_per_label_softmax_global(bonsai,fasttext,mllm) | yso-fi | 5 | 0.726390 | 0.821145 | 0.696299 | 0.803387 | 0.533387 |
+| torch_per_label_softmax_global(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.441699 | 0.559549 | 0.364113 | 0.478021 | 0.268925 |
 | torch_per_label_softmax_global_l2_anchor(bonsai,fasttext,mllm) | yso-en | 12 | 0.719316 | 0.814469 | 0.652481 | 0.769640 | 0.465023 |
-| torch_per_label_softmax_global_l2_anchor(bonsai,fasttext,mllm) | yso-fi | 5 | 0.725367 | 0.822465 | 0.709872 | 0.816324 | 0.543588 |
+| torch_per_label_softmax_global_l2_anchor(bonsai,fasttext,mllm) | yso-fi | 5 | 0.727944 | 0.824020 | 0.696975 | 0.806097 | 0.534801 |
 | torch_per_label_softmax_global_l2_anchor(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.439339 | 0.555319 | 0.361812 | 0.474325 | 0.264873 |
-| torch_per_label_softmax_global_scale(bonsai,fasttext,mllm) | yso-en | 11 | 0.722894 | 0.815444 | 0.660923 | 0.775213 | 0.472158 |
-| torch_per_label_softmax_global_scale(bonsai,fasttext,mllm) | yso-fi | 4 | 0.722545 | 0.820202 | 0.707331 | 0.814153 | 0.542623 |
-| torch_per_label_softmax_global_scale(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 2 | 0.439798 | 0.555785 | 0.364180 | 0.476558 | 0.266555 |
+| torch_per_label_softmax_global_scale(bonsai,fasttext,mllm) | yso-en | 8 | 0.713549 | 0.809017 | 0.653860 | 0.769861 | 0.469596 |
+| torch_per_label_softmax_global_scale(bonsai,fasttext,mllm) | yso-fi | 4 | 0.725911 | 0.822380 | 0.695032 | 0.803800 | 0.533575 |
+| torch_per_label_softmax_global_scale(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 2 | 0.441323 | 0.557100 | 0.363759 | 0.476322 | 0.267681 |
 | torch_reg_mean_residual(bonsai,fasttext,mllm) | yso-en | 1 | 0.689306 | 0.781867 | 0.611709 | 0.708791 | 0.434239 |
 | torch_reg_mean_residual(bonsai,fasttext,mllm) | yso-fi | 1 | 0.691964 | 0.772237 | 0.653525 | 0.736514 | 0.495014 |
 | torch_reg_mean_residual(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.416510 | 0.510249 | 0.329807 | 0.409213 | 0.247815 |
@@ -127,14 +127,14 @@
 
 | Rank | Model | Avg Test NDCG@10 |
 |------|-------|----------------|
-| 1 | torch_nn_split_per_label | 0.584329 |
-| 2 | torch_per_label_softmax_global_scale | 0.577478 |
-| 3 | torch_per_label | 0.577014 |
-| 4 | torch_per_label_softmax_global | 0.576621 |
-| 5 | torch_per_label_bias_global_plus_delta | 0.575339 |
-| 6 | torch_per_label_softmax_global_l2_anchor | 0.574722 |
-| 7 | torch_lowrank_residual_epsclamp | 0.571729 |
-| 8 | torch_lowrank_residual_mix_temp | 0.571218 |
+| 1 | torch_nn_split_per_label | 0.574079 |
+| 2 | torch_per_label_softmax_global | 0.572074 |
+| 3 | torch_lowrank_residual_epsclamp | 0.571729 |
+| 4 | torch_lowrank_residual_mix_temp | 0.571443 |
+| 5 | torch_per_label_bias_global_plus_delta | 0.570993 |
+| 6 | torch_per_label_softmax_global_scale | 0.570884 |
+| 7 | torch_per_label_softmax_global_l2_anchor | 0.570423 |
+| 8 | torch_per_label_mlp | 0.570215 |
 | 9 | torch_per_label_mlp_gate_per_label | 0.569812 |
 | 10 | torch_per_label_residual_lowrank_mix_active | 0.569807 |
 
@@ -142,55 +142,55 @@
 
 | Rank | Model | Avg Test NDCG@1000 |
 |------|-------|----------------|
-| 1 | torch_per_label_softmax_global | 0.689099 |
-| 2 | torch_per_label_softmax_global_scale | 0.688641 |
-| 3 | torch_per_label | 0.687146 |
-| 4 | torch_per_label_softmax_global_l2_anchor | 0.686763 |
-| 5 | torch_per_label_bias_global_plus_delta | 0.686057 |
-| 6 | torch_mean_residual_softmax_global | 0.682992 |
-| 7 | torch_mean_residual_softmax_global_l2_anchor | 0.682120 |
-| 8 | torch_mean_residual_l2_anchor_global | 0.682116 |
-| 9 | torch_per_label_l1_delta | 0.681959 |
+| 1 | torch_per_label_softmax_global | 0.683942 |
+| 2 | torch_per_label_softmax_global_l2_anchor | 0.683354 |
+| 3 | torch_per_label_softmax_global_scale | 0.683328 |
+| 4 | torch_mean_residual_softmax_global | 0.682992 |
+| 5 | torch_per_label_bias_global_plus_delta | 0.682493 |
+| 6 | torch_mean_residual_softmax_global_l2_anchor | 0.682120 |
+| 7 | torch_mean_residual_l2_anchor_global | 0.682116 |
+| 8 | torch_per_label_l1_delta | 0.681959 |
+| 9 | torch_per_label_mlp | 0.681847 |
 | 10 | torch_per_label_mlp_gate_per_sample | 0.681723 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
 | Rank | Model | Avg Test F1@5 |
 |------|-------|----------------|
-| 1 | torch_nn_split_per_label | 0.427528 |
-| 2 | torch_per_label | 0.427495 |
-| 3 | torch_per_label_bias_global_plus_delta | 0.427423 |
-| 4 | torch_per_label_softmax_global | 0.427203 |
-| 5 | torch_per_label_softmax_global_scale | 0.427112 |
-| 6 | torch_per_label_softmax_global_l2_anchor | 0.424495 |
-| 7 | torch_per_label_mlp | 0.422753 |
-| 8 | torch_per_label_mlp_gate_per_sample | 0.422746 |
-| 9 | torch_per_label_mlp_rank_bottleneck | 0.422724 |
-| 10 | torch_per_label_residual_lowrank_mix_active | 0.422702 |
+| 1 | torch_per_label_bias_global_plus_delta | 0.424349 |
+| 2 | torch_per_label_softmax_global_scale | 0.423617 |
+| 3 | torch_per_label_softmax_global | 0.423317 |
+| 4 | torch_per_label_mlp_gate_per_sample | 0.422746 |
+| 5 | torch_per_label | 0.422732 |
+| 6 | torch_per_label_mlp_rank_bottleneck | 0.422724 |
+| 7 | torch_per_label_residual_lowrank_mix_active | 0.422702 |
+| 8 | torch_per_label_mlp_remove_centering | 0.422697 |
+| 9 | torch_per_label_mlp | 0.422683 |
+| 10 | torch_per_label_mlp_gate_per_label | 0.422663 |
 
 ## Top 10 Models by Weighted Avg (across datasets)
 
 | Rank | Model | Weighted Avg (0.4 NDCG@10, 0.4 F1@5, 0.2 NDCG@1000) across datasets |
 |------|-------|----------------|
-| 1 | torch_per_label_softmax_global_scale | 0.539564 |
-| 2 | torch_per_label_softmax_global | 0.539350 |
-| 3 | torch_per_label | 0.539233 |
-| 4 | torch_per_label_bias_global_plus_delta | 0.538316 |
-| 5 | torch_per_label_softmax_global_l2_anchor | 0.537039 |
-| 6 | torch_nn_split_per_label | 0.536562 |
-| 7 | torch_per_label_mlp | 0.533334 |
-| 8 | torch_per_label_mlp_gate_per_sample | 0.533334 |
-| 9 | torch_per_label_mlp_rank_bottleneck | 0.533060 |
-| 10 | torch_mean_residual_softmax_global | 0.532902 |
+| 1 | torch_per_label_softmax_global | 0.534945 |
+| 2 | torch_per_label_bias_global_plus_delta | 0.534636 |
+| 3 | torch_per_label_softmax_global_scale | 0.534466 |
+| 4 | torch_per_label_mlp | 0.533528 |
+| 5 | torch_per_label_softmax_global_l2_anchor | 0.533466 |
+| 6 | torch_per_label_mlp_gate_per_sample | 0.533334 |
+| 7 | torch_per_label | 0.533326 |
+| 8 | torch_per_label_mlp_rank_bottleneck | 0.533060 |
+| 9 | torch_mean_residual_softmax_global | 0.532902 |
+| 10 | torch_per_label_l1_delta | 0.532857 |
 
 ## Top 10 Models by Weighted Avg (koko)
 
 | Rank | Model | Weighted Avg (0.4 NDCG@10, 0.4 F1@5, 0.2 NDCG@1000) |
 |------|-------|----------------|
-| 1 | torch_nn_split_per_label | 0.354320 |
-| 2 | torch_nn_split | 0.352223 |
-| 3 | torch_per_label_softmax_global_scale | 0.347606 |
-| 4 | torch_per_label_softmax_global | 0.347581 |
+| 1 | torch_nn_split | 0.352223 |
+| 2 | torch_nn_split_per_label | 0.350607 |
+| 3 | torch_per_label_softmax_global | 0.348819 |
+| 4 | torch_per_label_softmax_global_scale | 0.347840 |
 | 5 | torch_mean_residual_softmax_global | 0.346967 |
 | 6 | torch_mean_residual_l2_anchor_global | 0.346196 |
 | 7 | torch_mean_residual_softmax_global_l2_anchor | 0.346189 |
@@ -202,11 +202,11 @@
 
 | Rank | Model | Weighted Avg (0.4 NDCG@10, 0.4 F1@5, 0.2 NDCG@1000) |
 |------|-------|----------------|
-| 1 | torch_per_label_softmax_global | 0.609588 |
-| 2 | torch_per_label_softmax_global_scale | 0.608275 |
-| 3 | torch_per_label | 0.607357 |
-| 4 | torch_per_label_bias_global_plus_delta | 0.605080 |
-| 5 | torch_per_label_softmax_global_l2_anchor | 0.600930 |
+| 1 | torch_per_label_bias_global_plus_delta | 0.605080 |
+| 2 | torch_per_label_softmax_global | 0.603462 |
+| 3 | torch_per_label_softmax_global_scale | 0.603355 |
+| 4 | torch_per_label_softmax_global_l2_anchor | 0.600930 |
+| 5 | torch_per_label | 0.600189 |
 | 6 | torch_per_label_mlp_gate_per_sample | 0.600174 |
 | 7 | torch_per_label_mlp | 0.600173 |
 | 8 | torch_per_label_mlp_gate_per_label | 0.600173 |
@@ -217,13 +217,13 @@
 
 | Rank | Model | Weighted Avg (0.4 NDCG@10, 0.4 F1@5, 0.2 NDCG@1000) |
 |------|-------|----------------|
-| 1 | torch_per_label | 0.665012 |
-| 2 | torch_per_label_softmax_global_l2_anchor | 0.664649 |
-| 3 | torch_per_label_bias_global_plus_delta | 0.664403 |
-| 4 | torch_per_label_softmax_global_scale | 0.662812 |
-| 5 | torch_per_label_softmax_global | 0.660880 |
-| 6 | torch_nn_split_per_label | 0.656741 |
-| 7 | torch_mean_residual_l2_anchor_global | 0.655279 |
-| 8 | torch_mean_residual_softmax_global_l2_anchor | 0.655131 |
-| 9 | torch_per_label_l1_delta | 0.654861 |
-| 10 | torch_mean_residual_lowrank_mix | 0.654449 |
+| 1 | torch_mean_residual_l2_anchor_global | 0.655279 |
+| 2 | torch_mean_residual_softmax_global_l2_anchor | 0.655131 |
+| 3 | torch_per_label_l1_delta | 0.654861 |
+| 4 | torch_per_label_mlp | 0.654572 |
+| 5 | torch_mean_residual_lowrank_mix | 0.654449 |
+| 6 | torch_mean_residual_softmax_global | 0.654202 |
+| 7 | torch_per_label | 0.653989 |
+| 8 | torch_per_label_mlp_rank_bottleneck | 0.653989 |
+| 9 | torch_per_label_mlp_gate_per_label | 0.653988 |
+| 10 | torch_per_label_mlp_gate_per_sample | 0.653988 |

@@ -130,3 +130,87 @@ def csr_to_gamma_tensor(csr: csr_matrix, *, gamma: float) -> torch.Tensor:
 
 def tensor_to_csr(t: torch.Tensor) -> csr_matrix:
     return csr_matrix(t.detach().cpu().numpy())
+
+
+class SparseCSRDataset(torch.utils.data.Dataset):
+    """
+    A PyTorch Dataset that wraps one or more scipy.sparse.csr_matrix objects.
+
+    Densification is performed on-the-fly in __getitem__, which avoids
+    keeping massive dense matrices in RAM.
+    """
+
+    def __init__(
+        self,
+        x_csrs: list[csr_matrix],
+        y_csr: csr_matrix | None = None,
+        stack_dim: int | None = 0,
+        transform: callable | None = None,
+    ):
+        if not x_csrs:
+            raise ValueError("At least one X CSR matrix must be provided")
+
+        self.x_csrs = x_csrs
+        self.y_csr = y_csr
+        self.n_samples = x_csrs[0].shape[0]
+        self.stack_dim = stack_dim
+        self.transform = transform
+
+        for i, m in enumerate(x_csrs):
+            if m.shape[0] != self.n_samples:
+                raise ValueError(
+                    f"X CSR matrix at index {i} has {m.shape[0]} rows, expected {self.n_samples}"
+                )
+        if y_csr is not None and y_csr.shape[0] != self.n_samples:
+            raise ValueError(
+                f"Y CSR matrix has {y_csr.shape[0]} rows, expected {self.n_samples}"
+            )
+
+    def __len__(self) -> int:
+        return self.n_samples
+
+    def __getitem__(self, idx: int):
+        # Convert X sparse rows to dense tensors
+        x_rows = [
+            torch.from_numpy(m[idx].toarray().squeeze(0)).float() for m in self.x_csrs
+        ]
+
+        if self.stack_dim is not None:
+            x = torch.stack(x_rows, dim=self.stack_dim)
+        else:
+            x = x_rows[0] if len(x_rows) == 1 else tuple(x_rows)
+
+        if self.y_csr is not None:
+            y = torch.from_numpy(self.y_csr[idx].toarray().squeeze(0)).float()
+            out = (x, y)
+        else:
+            out = x
+
+        if self.transform:
+            out = self.transform(out)
+
+        return out
+
+
+def log1p_transform(x: torch.Tensor) -> torch.Tensor:
+    """Standard log1p(clamp(x, 0)) transform used by most models."""
+    return torch.log1p(torch.clamp(x, min=0.0))
+
+
+def logit_transform(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Standard logit(clamp(x, eps, 1-eps)) transform."""
+    x = torch.clamp(x, min=float(eps), max=1.0 - float(eps))
+    return torch.logit(x)
+
+
+def gamma_transform(x: torch.Tensor, gamma: float) -> torch.Tensor:
+    """Standard p**gamma transform."""
+    if gamma <= 0:
+        raise ValueError("gamma must be positive")
+    x = torch.clamp(x, min=0.0, max=1.0)
+    return torch.pow(x, float(gamma))
+
+
+def sqrt_transform(x: torch.Tensor) -> torch.Tensor:
+    """Standard sqrt(clamp(x, 0)) transform."""
+    return torch.sqrt(torch.clamp(x, min=0.0))
