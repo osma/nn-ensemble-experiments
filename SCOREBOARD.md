@@ -77,9 +77,9 @@
 | torch_per_label_bias_global_plus_delta(bonsai,fasttext,mllm) | yso-en | 16 | 0.724260 | 0.816058 | 0.656047 | 0.768774 | 0.472266 |
 | torch_per_label_bias_global_plus_delta(bonsai,fasttext,mllm) | yso-fi | 5 | 0.728169 | 0.824068 | 0.695609 | 0.804951 | 0.535320 |
 | torch_per_label_bias_global_plus_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.440609 | 0.558307 | 0.361324 | 0.473755 | 0.265462 |
-| torch_per_label_elastic_anchor(bonsai,fasttext,mllm) | yso-en | 9 | 0.710604 | 0.807704 | 0.652542 | 0.768519 | 0.465771 |
-| torch_per_label_elastic_anchor(bonsai,fasttext,mllm) | yso-fi | 4 | 0.724318 | 0.821773 | 0.694365 | 0.803768 | 0.531527 |
-| torch_per_label_elastic_anchor(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.442056 | 0.561662 | 0.363747 | 0.479150 | 0.268074 |
+| torch_per_label_elastic_anchor(bonsai,fasttext,mllm) | yso-en | 9 | 0.711313 | 0.807990 | 0.653161 | 0.768733 | 0.466575 |
+| torch_per_label_elastic_anchor(bonsai,fasttext,mllm) | yso-fi | 4 | 0.724863 | 0.822136 | 0.694199 | 0.803687 | 0.532063 |
+| torch_per_label_elastic_anchor(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.442434 | 0.561829 | 0.363811 | 0.478812 | 0.268185 |
 | torch_per_label_global_plus_delta(bonsai,fasttext,mllm) | yso-en | 3 | 0.702425 | 0.801179 | 0.635216 | 0.758246 | 0.449534 |
 | torch_per_label_global_plus_delta(bonsai,fasttext,mllm) | yso-fi | 2 | 0.707021 | 0.809255 | 0.692057 | 0.803521 | 0.524475 |
 | torch_per_label_global_plus_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 1 | 0.433219 | 0.546388 | 0.356868 | 0.465507 | 0.260260 |
@@ -137,7 +137,7 @@
 | 5 | torch_per_label_bias_global_plus_delta | 0.570993 |
 | 6 | torch_per_label_softmax_global_scale | 0.570884 |
 | 7 | torch_per_label_softmax_global_l2_anchor | 0.570423 |
-| 8 | torch_per_label_elastic_anchor | 0.570218 |
+| 8 | torch_per_label_elastic_anchor | 0.570390 |
 | 9 | torch_per_label_mlp | 0.570215 |
 | 10 | torch_per_label_mlp_gate_per_label | 0.569812 |
 
@@ -146,7 +146,7 @@
 | Rank | Model | Avg Test NDCG@1000 |
 |------|-------|----------------|
 | 1 | torch_per_label_softmax_global | 0.683942 |
-| 2 | torch_per_label_elastic_anchor | 0.683812 |
+| 2 | torch_per_label_elastic_anchor | 0.683744 |
 | 3 | torch_per_label_softmax_global_l2_anchor | 0.683354 |
 | 4 | torch_per_label_softmax_global_scale | 0.683328 |
 | 5 | torch_mean_residual_softmax_global | 0.682992 |
@@ -178,7 +178,7 @@
 | 1 | torch_per_label_softmax_global | 0.534945 |
 | 2 | torch_per_label_bias_global_plus_delta | 0.534636 |
 | 3 | torch_per_label_softmax_global_scale | 0.534466 |
-| 4 | torch_per_label_elastic_anchor | 0.533566 |
+| 4 | torch_per_label_elastic_anchor | 0.533815 |
 | 5 | torch_per_label_mlp | 0.533528 |
 | 6 | torch_per_label_softmax_global_l2_anchor | 0.533466 |
 | 7 | torch_per_label_mlp_gate_per_sample | 0.533334 |
@@ -193,7 +193,7 @@
 | 1 | torch_nn_split | 0.352223 |
 | 2 | torch_nn_split_per_label | 0.350607 |
 | 3 | torch_per_label_softmax_global | 0.348819 |
-| 4 | torch_per_label_elastic_anchor | 0.348558 |
+| 4 | torch_per_label_elastic_anchor | 0.348561 |
 | 5 | torch_per_label_softmax_global_scale | 0.347840 |
 | 6 | torch_mean_residual_softmax_global | 0.346967 |
 | 7 | torch_mean_residual_l2_anchor_global | 0.346196 |
@@ -208,7 +208,7 @@
 | 1 | torch_per_label_bias_global_plus_delta | 0.605080 |
 | 2 | torch_per_label_softmax_global | 0.603462 |
 | 3 | torch_per_label_softmax_global_scale | 0.603355 |
-| 4 | torch_per_label_elastic_anchor | 0.601029 |
+| 4 | torch_per_label_elastic_anchor | 0.601641 |
 | 5 | torch_per_label_softmax_global_l2_anchor | 0.600930 |
 | 6 | torch_per_label | 0.600189 |
 | 7 | torch_per_label_mlp_gate_per_sample | 0.600174 |

@@ -80,9 +80,10 @@ These models allow fully independent weights per label, often reparameterized fo
 | `softmax_global_scale` | `s * softmax(g) + w_delta`. | **Top overall** by Avg Test Metrics. Recovers scale freedom. |
 | `softmax_global_l2_anchor` | Softmax + L2 anchor to init weights. | Neutral on `yso-fi`, worse on `yso-en`. Tie on `koko`. |
 | `elastic_anchor` (v1) | Softmax + Elastic Net (L1+L2) + L2 Anchor. | **Regression**. Over-regularized; `w_delta` frozen near zero. |
-| `elastic_anchor` (v2) | Softmax + L2 Delta + Bias Decomposition. | **Strong result (#4 Overall)**. #2 on Avg NDCG@1000. Excels on `koko` and `yso-en`. |
+| `elastic_anchor` (v2) | Softmax + L2 Delta + Bias Decomposition. | **Strong result (#4 Overall)**. #2 on Avg NDCG@1000. |
+| `elastic_anchor` (v3) | Softmax + Bias Decomposition (no δ-L2). | **Improved #4 Overall (0.5338)**. Confirms soft constraints are better. |
 
-> **Note on Elastic Anchor**: v1 failed because combining L1, L2, and a strong L2 anchor to initialization restricted per-label adaptation too much. v2 simplified this to just Softmax-constrained globals (acting as a "soft" anchor) and additive bias decomposition, which proved much more effective.
+> **Note on Elastic Anchor**: v1 failed because combining L1, L2, and a strong L2 anchor to initialization restricted per-label adaptation too much. v3 proved that removing explicit L2 on the weight residuals (matching the champion's settings) and using only a light bias shrinkage allows for the best performance while maintaining stability via the softmax global weights.
 
 ### 3. `torch_per_label_mlp` Family
 *Original source: PER_LABEL_MLP.md*

@@ -1,14 +1,12 @@
 # STATUS: EXPERIMENTAL
 # Purpose: Per-label ensemble combining the two top-performing patterns:
-#   1. Softmax-constrained global weights + L2 on per-label residuals
-#      (from torch_per_label_softmax_global, overall #1)
-#   2. Bias decomposition: global scalar + per-label delta
-#      (from torch_per_label_bias_global_plus_delta, #1 yso-en, #1 F1@5)
+#   1. Softmax-constrained global weights (overall #1 pattern)
+#   2. Bias decomposition: global scalar + per-label delta (#1 yso-en pattern)
 #
-# This specific combination has not been tested before. Previous version
-# (v1) also included L1 on delta and an L2 anchor to init, which the debug
-# output showed were over-regularizing w_delta (keeping it in ~1e-3 range
-# throughout training). Removing those lets w_delta contribute meaningfully.
+# v3 changes:
+#   - Set λ_delta_l2 = 0 to match the champion (softmax_global) settings.
+#   - Reduced λ_bias_l2 to 1e-4 for less aggressive bias shrinkage.
+#   - Increased EPOCHS to 30 and PATIENCE to 3 to allow fuller convergence.
 #
 # Architecture:
 #   w_global = softmax(g_raw)                         # (M,)
@@ -16,7 +14,7 @@
 #   logits[b, l] = sum_m w_eff[m,l] * x[b,m,l] + bias_global + bias_delta[l]
 #
 # Loss:
-#   BCE + λ_l2 * mean(w_delta²) + λ_bias * mean(bias_delta²)
+#   BCE + λ_bias * mean(bias_delta²)
 #
 # Debug output: always-on, prints loss decomposition, weight stats, gradient norms.
 from __future__ import annotations
@@ -151,10 +149,10 @@ class PerLabelElasticAnchorEnsemble(nn.Module):
 # ============================
 
 DEVICE = get_device()
-EPOCHS = 20
+EPOCHS = 30
 K_VALUES = (10, 1000)
 
-PATIENCE = 2
+PATIENCE = 3
 MIN_EPOCHS = 2
 
 EVAL_BATCH_SIZE = 512
@@ -170,12 +168,12 @@ BEST_BATCH_SIZE = 256
 TRAIN_SEED = 0
 
 # Regularization strengths
-# v1 lesson: anchor + L1 over-constrained w_delta → kept it near zero throughout.
-# v2: only L2 on delta (same as torch_per_label_softmax_global) + bias shrinkage.
-LAMBDA_DELTA_L2 = 1e-3   # same as torch_per_label_softmax_global (proven)
-LAMBDA_DELTA_L1 = 0.0    # removed: was suppressing w_delta too much
-LAMBDA_ANCHOR = 0.0      # removed: was freezing global weights
-LAMBDA_BIAS_L2 = 1e-3    # shrinkage on per-label bias delta
+# v3: remove λ_delta_l2 to match champion (torch_per_label_softmax_global).
+# Reduced λ_bias_l2 to 1e-4.
+LAMBDA_DELTA_L2 = 0.0    # match champion
+LAMBDA_DELTA_L1 = 0.0
+LAMBDA_ANCHOR = 0.0
+LAMBDA_BIAS_L2 = 1e-4    # gentler bias shrinkage
 
 
 def _grad_norm(params: list[torch.Tensor]) -> float:
@@ -272,7 +270,7 @@ def train_and_evaluate(
     print(f"[DEBUG] Init global weights (w_init): {model.w_init.cpu().numpy().tolist()}")
     print(f"[DEBUG] Regularization: "
           f"λ_delta_l2={lambda_delta_l2:g} λ_bias_l2={lambda_bias_l2:g} "
-          f"(L1-delta and anchor removed in v2)")
+          f"(v3: λ_delta_l2=0, λ_bias_l2=1e-4)")
     print()
 
     for epoch in range(1, EPOCHS + 1):
@@ -505,7 +503,7 @@ def main() -> None:
     print(
         f"Training | lr={BEST_LR:g} | wd={BEST_WEIGHT_DECAY:g} | bs={BEST_BATCH_SIZE} | "
         f"λ_delta_l2={LAMBDA_DELTA_L2:g} λ_bias_l2={LAMBDA_BIAS_L2:g} "
-        f"(v2: no L1-delta, no anchor)"
+        f"(v3: increased budget)"
     )
     print()
 
