@@ -102,6 +102,7 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 | `layernorm_feats` | LayerNorm over flattened features before MLP. | Regression. LN amplifies small widespread signals. |
 | `rank_bottleneck` | Low-rank bottleneck (rank=32) in MLP output. | No gain. `koko` still regresses. |
 | `remove_centering` | Remove per-sample centering on `delta`. | **Severe regression**. Learns degenerate global shift. |
+| `no_delta` (S1) | Remove `w_delta` and rely only on low-rank mixer. | **Major Regression**. `w_delta` is critical; low-rank mixer at current settings does not learn fast enough to compensate. |
 
 ---
 
@@ -118,6 +119,7 @@ Consistent use of `log1p(clamp(x,0))` for logits-based models. Keeping this outs
 2. **Label Independence**: Per-label independence is a strong prior because label spaces are huge and sparse.
 3. **Logit Space Advantage**: Training in logit space avoids saturation and provides smoother gradients.
 4. **Imbalance vs. Capacity**: Class imbalance interacts with capacity; broad shifts are rewarded by BCE but harm ranking.
+5. **Base Weights vs. Correction**: Simple base weights (like `w_delta`) provide essential label-specific signals that complex corrections (like low-rank mixers) struggle to recover if trained from scratch with low learning rates.
 
 ---
 
