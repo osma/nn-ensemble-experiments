@@ -103,6 +103,7 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 | `rank_bottleneck` | Low-rank bottleneck (rank=32) in MLP output. | No gain. `koko` still regresses. |
 | `remove_centering` | Remove per-sample centering on `delta`. | **Severe regression**. Learns degenerate global shift. |
 | `no_delta` (S1) | Remove `w_delta` and rely only on low-rank mixer. | **Major Regression**. `w_delta` is critical; low-rank mixer at current settings does not learn fast enough to compensate. |
+| `fixed_gate` (S2) | Replace learnable gate with fixed constant 0.02. | **Negligible regression** (-0.0002). Confirms learning the gate is unnecessary for the #1 model. |
 
 ---
 
