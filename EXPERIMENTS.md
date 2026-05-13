@@ -105,6 +105,7 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 | `no_delta` (S1) | Remove `w_delta` and rely only on low-rank mixer. | **Major Regression**. `w_delta` is critical; low-rank mixer at current settings does not learn fast enough to compensate. |
 | `fixed_gate` (S2) | Replace learnable gate with fixed constant 0.02. | **Negligible regression** (-0.0002). Confirms learning the gate is unnecessary for the #1 model. |
 | `rank16` (S3) | Reduce rank from 64 to 16 in low-rank mixer. | **Minimal regression** (-0.0005). Shows 4× reduction in rank capacity retains ~99.9% of performance. |
+| `no_base_ch` (S4) | Remove `base_logits` channel from low-rank mixer. | **Minimal regression** (-0.0005). Confirms base logits are mostly redundant when raw model inputs are present, though they provide a small performance boost on `yso-*`. |
 
 ---
 
