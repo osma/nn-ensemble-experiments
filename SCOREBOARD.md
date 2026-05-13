@@ -128,6 +128,9 @@
 | torch_per_label_softmax_global_active_lowrank_no_base_ch(bonsai,fasttext,mllm) | yso-en | 9 | 0.711999 | 0.808253 | 0.653958 | 0.769079 | 0.466211 |
 | torch_per_label_softmax_global_active_lowrank_no_base_ch(bonsai,fasttext,mllm) | yso-fi | 5 | 0.726819 | 0.821518 | 0.696673 | 0.803411 | 0.534102 |
 | torch_per_label_softmax_global_active_lowrank_no_base_ch(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.441539 | 0.558867 | 0.364008 | 0.477180 | 0.268893 |
+| torch_per_label_softmax_global_active_lowrank_no_centering(bonsai,fasttext,mllm) | yso-en | 10 | 0.712864 | 0.807867 | 0.655927 | 0.770378 | 0.467829 |
+| torch_per_label_softmax_global_active_lowrank_no_centering(bonsai,fasttext,mllm) | yso-fi | 5 | 0.726533 | 0.821319 | 0.696657 | 0.803674 | 0.535452 |
+| torch_per_label_softmax_global_active_lowrank_no_centering(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.441670 | 0.558147 | 0.364130 | 0.477083 | 0.269109 |
 | torch_per_label_softmax_global_active_lowrank_no_delta(bonsai,fasttext,mllm) | yso-en | 1 | 0.691553 | 0.795669 | 0.623455 | 0.750474 | 0.442867 |
 | torch_per_label_softmax_global_active_lowrank_no_delta(bonsai,fasttext,mllm) | yso-fi | 2 | 0.700624 | 0.804168 | 0.676355 | 0.792808 | 0.507469 |
 | torch_per_label_softmax_global_active_lowrank_no_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 5 | 0.428490 | 0.553316 | 0.356472 | 0.474672 | 0.261796 |
@@ -155,15 +158,15 @@
 | Rank | Model | Avg Test NDCG@10 |
 |------|-------|----------------|
 | 1 | torch_nn_split_per_label | 0.574079 |
-| 2 | torch_per_label_softmax_global_active_mlp | 0.572231 |
-| 3 | torch_per_label_softmax_global | 0.572074 |
-| 4 | torch_lowrank_residual_epsclamp | 0.571729 |
-| 5 | torch_per_label_softmax_global_active_lowrank | 0.571662 |
-| 6 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.571626 |
-| 7 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.571546 |
-| 8 | torch_lowrank_residual_mix_temp | 0.571443 |
-| 9 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.571026 |
-| 10 | torch_per_label_bias_global_plus_delta | 0.570993 |
+| 2 | torch_per_label_softmax_global_active_lowrank_no_centering | 0.572238 |
+| 3 | torch_per_label_softmax_global_active_mlp | 0.572231 |
+| 4 | torch_per_label_softmax_global | 0.572074 |
+| 5 | torch_lowrank_residual_epsclamp | 0.571729 |
+| 6 | torch_per_label_softmax_global_active_lowrank | 0.571662 |
+| 7 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.571626 |
+| 8 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.571546 |
+| 9 | torch_lowrank_residual_mix_temp | 0.571443 |
+| 10 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.571026 |
 
 ## Top 10 Models by Avg Test NDCG@1000 (across datasets)
 
@@ -174,41 +177,41 @@
 | 3 | torch_per_label_softmax_global_active_lowrank | 0.683867 |
 | 4 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.683767 |
 | 5 | torch_per_label_elastic_anchor | 0.683744 |
-| 6 | torch_per_label_softmax_global_l2_anchor | 0.683354 |
-| 7 | torch_per_label_softmax_global_scale | 0.683328 |
-| 8 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.683223 |
-| 9 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.683220 |
-| 10 | torch_per_label_softmax_global_active_lowrank_single_lr | 0.683036 |
+| 6 | torch_per_label_softmax_global_active_lowrank_no_centering | 0.683712 |
+| 7 | torch_per_label_softmax_global_l2_anchor | 0.683354 |
+| 8 | torch_per_label_softmax_global_scale | 0.683328 |
+| 9 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.683223 |
+| 10 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.683220 |
 
 ## Top 10 Models by Avg Test F1@5 (across datasets)
 
 | Rank | Model | Avg Test F1@5 |
 |------|-------|----------------|
 | 1 | torch_per_label_bias_global_plus_delta | 0.424349 |
-| 2 | torch_per_label_softmax_global_active_lowrank | 0.423948 |
-| 3 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.423768 |
-| 4 | torch_per_label_softmax_global_scale | 0.423617 |
-| 5 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.423396 |
-| 6 | torch_per_label_softmax_global | 0.423317 |
-| 7 | torch_per_label_softmax_global_active_mlp | 0.423168 |
-| 8 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.423069 |
-| 9 | torch_per_label_mlp_gate_per_sample | 0.422746 |
-| 10 | torch_per_label | 0.422732 |
+| 2 | torch_per_label_softmax_global_active_lowrank_no_centering | 0.424130 |
+| 3 | torch_per_label_softmax_global_active_lowrank | 0.423948 |
+| 4 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.423768 |
+| 5 | torch_per_label_softmax_global_scale | 0.423617 |
+| 6 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.423396 |
+| 7 | torch_per_label_softmax_global | 0.423317 |
+| 8 | torch_per_label_softmax_global_active_mlp | 0.423168 |
+| 9 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.423069 |
+| 10 | torch_per_label_mlp_gate_per_sample | 0.422746 |
 
 ## Top 10 Models by Weighted Avg (across datasets)
 
 | Rank | Model | Weighted Avg (0.4 NDCG@10, 0.4 F1@5, 0.2 NDCG@1000) across datasets |
 |------|-------|----------------|
-| 1 | torch_per_label_softmax_global_active_lowrank | 0.535017 |
-| 2 | torch_per_label_softmax_global | 0.534945 |
-| 3 | torch_per_label_softmax_global_active_mlp | 0.534933 |
-| 4 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.534801 |
-| 5 | torch_per_label_bias_global_plus_delta | 0.534636 |
-| 6 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.534522 |
-| 7 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.534491 |
-| 8 | torch_per_label_softmax_global_scale | 0.534466 |
-| 9 | torch_per_label_elastic_anchor | 0.533815 |
-| 10 | torch_per_label_mlp | 0.533528 |
+| 1 | torch_per_label_softmax_global_active_lowrank_no_centering | 0.535290 |
+| 2 | torch_per_label_softmax_global_active_lowrank | 0.535017 |
+| 3 | torch_per_label_softmax_global | 0.534945 |
+| 4 | torch_per_label_softmax_global_active_mlp | 0.534933 |
+| 5 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.534801 |
+| 6 | torch_per_label_bias_global_plus_delta | 0.534636 |
+| 7 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.534522 |
+| 8 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.534491 |
+| 9 | torch_per_label_softmax_global_scale | 0.534466 |
+| 10 | torch_per_label_elastic_anchor | 0.533815 |
 
 ## Top 10 Models by Weighted Avg (koko)
 
@@ -218,12 +221,12 @@
 | 2 | torch_nn_split_per_label | 0.350607 |
 | 3 | torch_per_label_softmax_global_active_lowrank_single_lr | 0.348839 |
 | 4 | torch_per_label_softmax_global | 0.348819 |
-| 5 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.348596 |
-| 6 | torch_per_label_elastic_anchor | 0.348561 |
-| 7 | torch_per_label_softmax_global_active_mlp | 0.348478 |
-| 8 | torch_per_label_softmax_global_active_lowrank | 0.348469 |
-| 9 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.348398 |
-| 10 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.348267 |
+| 5 | torch_per_label_softmax_global_active_lowrank_no_centering | 0.348712 |
+| 6 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.348596 |
+| 7 | torch_per_label_elastic_anchor | 0.348561 |
+| 8 | torch_per_label_softmax_global_active_mlp | 0.348478 |
+| 9 | torch_per_label_softmax_global_active_lowrank | 0.348469 |
+| 10 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.348398 |
 
 ## Top 10 Models by Weighted Avg (yso-en)
 
@@ -231,14 +234,14 @@
 |------|-------|----------------|
 | 1 | torch_per_label_bias_global_plus_delta | 0.605080 |
 | 2 | torch_per_label_softmax_global_active_mlp | 0.603868 |
-| 3 | torch_per_label_softmax_global_active_lowrank | 0.603484 |
-| 4 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.603463 |
-| 5 | torch_per_label_softmax_global | 0.603462 |
-| 6 | torch_per_label_softmax_global_scale | 0.603355 |
-| 7 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.602475 |
-| 8 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.601883 |
-| 9 | torch_per_label_elastic_anchor | 0.601641 |
-| 10 | torch_per_label_softmax_global_l2_anchor | 0.600930 |
+| 3 | torch_per_label_softmax_global_active_lowrank_no_centering | 0.603578 |
+| 4 | torch_per_label_softmax_global_active_lowrank | 0.603484 |
+| 5 | torch_per_label_softmax_global_active_lowrank_fixed_gate | 0.603463 |
+| 6 | torch_per_label_softmax_global | 0.603462 |
+| 7 | torch_per_label_softmax_global_scale | 0.603355 |
+| 8 | torch_per_label_softmax_global_active_lowrank_rank16 | 0.602475 |
+| 9 | torch_per_label_softmax_global_active_lowrank_no_base_ch | 0.601883 |
+| 10 | torch_per_label_elastic_anchor | 0.601641 |
 
 ## Top 10 Models by Weighted Avg (yso-fi)
 
