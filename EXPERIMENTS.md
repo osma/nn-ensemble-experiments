@@ -106,6 +106,7 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 | `fixed_gate` (S2) | Replace learnable gate with fixed constant 0.02. | **Negligible regression** (-0.0002). Confirms learning the gate is unnecessary for the #1 model. |
 | `rank16` (S3) | Reduce rank from 64 to 16 in low-rank mixer. | **Minimal regression** (-0.0005). Shows 4× reduction in rank capacity retains ~99.9% of performance. |
 | `no_base_ch` (S4) | Remove `base_logits` channel from low-rank mixer. | **Minimal regression** (-0.0005). Confirms base logits are mostly redundant when raw model inputs are present, though they provide a small performance boost on `yso-*`. |
+| `single_lr` (S5) | Use single optimizer group with LR=1e-3 for all params. | **Regression** (Avg 0.5350 → 0.5327). Two-tiered learning rate (3e-3 for base, 1e-4 for low-rank) is superior for balancing convergence. |
 
 ---
 
