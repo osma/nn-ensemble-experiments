@@ -110,6 +110,7 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 | `no_centering` (S6) | Remove per-sample centering from low-rank delta. | **Improvement (#1 Overall: 0.535290)**. Unlike the MLP variant which failed without centering, the low-rank mixer is stable and actually benefits slightly from the removal. |
 | `additive` (S7) | Replace multiplicative with additive delta application. | **Slight regression** (Avg 0.5350 → 0.5347). Multiplicative scaling, which biases adjustments toward high-confidence labels, remains slightly superior to additive application for the low-rank mixer. |
 | `symmetric` (S8) | Tie U and V (symmetric factorization) in low-rank mixer. | **Minor regression** (Avg 0.5350 → 0.5348). Halving the label-projection parameters via symmetry provides a strong structural prior but slightly restricts the flexibility of the cross-label coupling. |
+| `no_clamp` (S9) | Remove tanh clamp from low-rank delta. | **Minor regression** (Avg 0.5350 → 0.5341). Removing the tanh clamp allows for theoretically larger deltas but did not yield performance gains, suggesting the clamp serves as a useful (if rarely hit) safety rail. |
 
 ---
 

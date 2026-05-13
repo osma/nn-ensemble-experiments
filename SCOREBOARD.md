@@ -134,6 +134,9 @@
 | torch_per_label_softmax_global_active_lowrank_no_centering(bonsai,fasttext,mllm) | yso-en | 10 | 0.712864 | 0.807867 | 0.655927 | 0.770378 | 0.467829 |
 | torch_per_label_softmax_global_active_lowrank_no_centering(bonsai,fasttext,mllm) | yso-fi | 5 | 0.726533 | 0.821319 | 0.696657 | 0.803674 | 0.535452 |
 | torch_per_label_softmax_global_active_lowrank_no_centering(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 3 | 0.441670 | 0.558147 | 0.364130 | 0.477083 | 0.269109 |
+| torch_per_label_softmax_global_active_lowrank_no_clamp(bonsai,fasttext,mllm) | yso-en | 9 | 0.711298 | 0.807299 | 0.653622 | 0.769103 | 0.467217 |
+| torch_per_label_softmax_global_active_lowrank_no_clamp(bonsai,fasttext,mllm) | yso-fi | 5 | 0.726514 | 0.821461 | 0.695975 | 0.803343 | 0.534096 |
+| torch_per_label_softmax_global_active_lowrank_no_clamp(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 4 | 0.442195 | 0.560462 | 0.362619 | 0.476470 | 0.267981 |
 | torch_per_label_softmax_global_active_lowrank_no_delta(bonsai,fasttext,mllm) | yso-en | 1 | 0.691553 | 0.795669 | 0.623455 | 0.750474 | 0.442867 |
 | torch_per_label_softmax_global_active_lowrank_no_delta(bonsai,fasttext,mllm) | yso-fi | 2 | 0.700624 | 0.804168 | 0.676355 | 0.792808 | 0.507469 |
 | torch_per_label_softmax_global_active_lowrank_no_delta(bonsai_gemma3,bonsai_ovis2,mllm) | koko | 5 | 0.428490 | 0.553316 | 0.356472 | 0.474672 | 0.261796 |
