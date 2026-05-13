@@ -108,6 +108,7 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 | `no_base_ch` (S4) | Remove `base_logits` channel from low-rank mixer. | **Minimal regression** (-0.0005). Confirms base logits are mostly redundant when raw model inputs are present, though they provide a small performance boost on `yso-*`. |
 | `single_lr` (S5) | Use single optimizer group with LR=1e-3 for all params. | **Regression** (Avg 0.5350 → 0.5327). Two-tiered learning rate (3e-3 for base, 1e-4 for low-rank) is superior for balancing convergence. |
 | `no_centering` (S6) | Remove per-sample centering from low-rank delta. | **Improvement (#1 Overall: 0.535290)**. Unlike the MLP variant which failed without centering, the low-rank mixer is stable and actually benefits slightly from the removal. |
+| `additive` (S7) | Replace multiplicative with additive delta application. | **Slight regression** (Avg 0.5350 → 0.5347). Multiplicative scaling, which biases adjustments toward high-confidence labels, remains slightly superior to additive application for the low-rank mixer. |
 
 ---
 
