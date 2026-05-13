@@ -111,6 +111,7 @@ Two-stage and end-to-end models: base logits are corrected by a residual MLP.
 | `additive` (S7) | Replace multiplicative with additive delta application. | **Slight regression** (Avg 0.5350 → 0.5347). Multiplicative scaling, which biases adjustments toward high-confidence labels, remains slightly superior to additive application for the low-rank mixer. |
 | `symmetric` (S8) | Tie U and V (symmetric factorization) in low-rank mixer. | **Minor regression** (Avg 0.5350 → 0.5348). Halving the label-projection parameters via symmetry provides a strong structural prior but slightly restricts the flexibility of the cross-label coupling. |
 | `no_clamp` (S9) | Remove tanh clamp from low-rank delta. | **Minor regression** (Avg 0.5350 → 0.5341). Removing the tanh clamp allows for theoretically larger deltas but did not yield performance gains, suggesting the clamp serves as a useful (if rarely hit) safety rail. |
+| `combined` (S11) | Combines S2, S3, S4, S6, and S8 (Fixed gate, Rank 16, No base channel, No centering, Symmetric). | **Strong simplification**. Achieves 99.88% of champion performance (0.5344) while removing ~8× parameters and 2 hyperparameters. Slightly worse than the base model (0.5349) on average, suggesting that while individual simplifications held up, their combination marginally over-constrains the mixer. |
 
 ---
 
