@@ -807,3 +807,385 @@ preprocessing) remains identical to the original.**
   tanh clamp remains. The clamp bounds the output to [-0.5, 0.5] before the gate,
   so even without centering the effective delta is bounded to [-0.01, 0.01].
   This should remain stable.
+
+---
+
+## Simplification 12: `simplify_combined_v2`
+
+**Name:** `torch_per_label_softmax_global_active_lowrank_combined_v2`
+
+**Hypothesis:** S11 combined five simplifications (S2+S3+S4+S6+S8) and achieved
+only 99.88% of champion performance (0.5344 vs 0.5350). Analysis of per-dataset
+results reveals the regression was concentrated on yso-en (NDCG@10 dropped from
+0.6556 to 0.5527), indicating that the three capacity-reducing changes to the mixer
+(S3: rank 64→16, S4: remove base channel, S8: tie U=V) compounded and
+over-constrained the cross-label coupling.
+
+This new combination takes a conservative approach: include **only the two
+simplifications that don't reduce mixer capacity**:
+
+- **S6 (no_centering):** The only simplification that *improved* performance
+  (+0.000273, new #1 at 0.535290). Removing per-sample centering benefits the
+  low-rank variant because the low-rank structure is inherently constrained and
+  centering was actually removing useful signal.
+- **S2 (fixed_gate):** Negligible regression (−0.000216). The learned gate barely
+  moves from its initialization of 0.02 during training, so fixing it removes a
+  parameter without meaningful loss. Also removes the `DELTA_GATE_MAX` hyperparameter.
+
+**Why not include others:**
+
+| Source | Why excluded |
+|--------|--------------|
+| S3 (`rank16`) | Reduces mixer capacity — was part of the compounding problem in S11. Rank 64 preserves the richer cross-label correlations that benefit yso-en. |
+| S4 (`no_base_ch`) | Reduces mixer input — compounds with rank reduction. Base logits provide useful signal on yso-en. |
+| S8 (`symmetric`) | Halves label-projection parameters — compounds with rank/channel reduction. Individually safe, but the S11 experiment showed it contributes to over-constraining when combined. |
+| S1, S5, S7, S9, S10 | All showed clear regressions individually. |
+
+**Predicted performance:** S6 gained +0.000273 and S2 lost −0.000216. If
+the effects are additive, the expected weighted average is ~0.535074, which would
+match or slightly exceed the champion (0.535017). Because both changes affect only
+the delta computation (not the mixer architecture), they are structurally
+independent and unlikely to interact negatively.
+
+**Changes vs. original (2 changes):**
+
+1. **Remove per-sample centering** from `get_lowrank_delta()` (S6).
+2. **Replace learnable gate with a fixed constant `gate = 0.02`.** Remove
+   `raw_gate` parameter and `DELTA_GATE_MAX` hyperparameter (S2).
+
+---
+
+### Concrete spec
+
+#### Constants (changes from original highlighted)
+
+```python
+EPOCHS = 20                      # unchanged
+K_VALUES = (10, 1000)            # unchanged
+PATIENCE = 3                     # unchanged
+MIN_EPOCHS = 2                   # unchanged
+EARLY_STOP_EVAL_ROWS = 512       # unchanged
+EARLY_STOP_SEED = 1337           # unchanged
+EVAL_BATCH_SIZE = 512            # unchanged
+TRAIN_SEED = 0                   # unchanged
+
+BEST_LR = 0.003                  # unchanged
+BEST_WEIGHT_DECAY = 0.0          # unchanged
+BEST_BATCH_SIZE = 256            # unchanged
+LAMBDA_DELTA_L2 = 1e-3           # unchanged
+
+LOWRANK_LR = 1e-4                # unchanged
+LOWRANK_WEIGHT_DECAY = 1e-2      # unchanged
+
+DEFAULT_RANK = 64                # unchanged (NOT reduced — keep full capacity)
+FIXED_GATE = 0.02                # NEW: replaces learnable raw_gate (S2)
+
+# REMOVED: DELTA_GATE_MAX = 0.2  (S2)
+```
+
+#### `LowRankActiveMixer` class — UNCHANGED from original
+
+```python
+class LowRankActiveMixer(nn.Module):
+    """
+    Project feats (B, C, L_active) -> (B, L_active) via low-rank linear mixer.
+    Separate U and V matrices (NOT tied — S8 excluded).
+    """
+    def __init__(self, n_channels: int, n_active: int, rank: int):
+        super().__init__()
+        self.n_channels = n_channels
+        self.n_active = n_active
+        self.rank = rank
+
+        self.U = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
+        self.V = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
+        self.W = nn.Parameter(0.01 * torch.randn(self.n_channels, self.rank))
+
+    def forward(self, feats: torch.Tensor) -> torch.Tensor:
+        B = feats.shape[0]
+        if self.n_active == 0:
+            return feats.new_zeros((B, 0))
+
+        # (B*C, L) @ (L, r) -> (B*C, r)
+        x2 = feats.reshape(B * self.n_channels, self.n_active)
+        Z = x2 @ self.U
+        Z = Z.reshape(B, self.n_channels, self.rank)
+
+        # Mix channels
+        h = torch.sum(Z * self.W.unsqueeze(0), dim=1)  # (B, r)
+
+        # Project back to labels — uses V.t() (separate V, NOT tied to U)
+        delta = h @ self.V.t()  # (B, L_active)
+        return delta
+```
+
+#### `ActiveLowRankEnsemble` class
+
+**`__init__` — 1 change (S2: remove `raw_gate`):**
+
+```python
+def __init__(
+    self,
+    *,
+    n_models: int,
+    n_labels: int,
+    active_idx: torch.Tensor,
+    rank: int,
+    init_global: torch.Tensor | None = None,
+) -> None:
+    super().__init__()
+    self.n_models = int(n_models)
+    self.n_labels = int(n_labels)
+
+    if active_idx.ndim != 1:
+        raise ValueError("active_idx must be 1D")
+    self.register_buffer("active_idx", active_idx.long())
+    self.n_active = int(active_idx.numel())
+
+    # init_global handling — identical to original
+    if init_global is None:
+        g = torch.full((self.n_models,), 1.0 / self.n_models, dtype=torch.float32)
+    else:
+        if init_global.ndim != 1 or init_global.shape[0] != self.n_models:
+            raise ValueError(
+                f"init_global must have shape ({self.n_models},), got {tuple(init_global.shape)}"
+            )
+        g = init_global.to(dtype=torch.float32).clone()
+        s = float(g.sum().item())
+        if not np.isfinite(s) or s <= 0.0:
+            raise ValueError("init_global must sum to a positive finite value")
+        g = g / g.sum()
+
+    self.g_raw = nn.Parameter(torch.log(torch.clamp(g, min=1e-12)))
+    self.w_delta = nn.Parameter(torch.zeros(self.n_models, self.n_labels))  # KEPT
+    self.bias = nn.Parameter(torch.zeros(self.n_labels))
+
+    # C = M raw logits + 1 base logit (base channel KEPT — S4 excluded)
+    self.lowrank = LowRankActiveMixer(
+        n_channels=self.n_models + 1,  # unchanged
+        n_active=self.n_active,
+        rank=rank,                      # uses DEFAULT_RANK=64, unchanged
+    )
+
+    # REMOVED: self.raw_gate = nn.Parameter(...) (S2 — replaced by FIXED_GATE constant)
+```
+
+**`global_w` and `effective_w` — unchanged:**
+
+```python
+def global_w(self) -> torch.Tensor:
+    return torch.softmax(self.g_raw, dim=0)
+
+def effective_w(self) -> torch.Tensor:
+    return self.global_w()[:, None] + self.w_delta
+```
+
+**`get_lowrank_delta` — 2 changes (S2 + S6):**
+
+```python
+def get_lowrank_delta(self, x_active: torch.Tensor, base_logits_active: torch.Tensor) -> torch.Tensor:
+    # Base channel KEPT (S4 excluded)
+    feats = torch.cat([x_active, base_logits_active.unsqueeze(1)], dim=1)  # (B, M+1, L_active)
+
+    delta_active = self.lowrank(feats)
+
+    # Tanh clamp KEPT (S9 excluded)
+    DELTA_CLAMP = 0.5
+    delta_active = DELTA_CLAMP * torch.tanh(delta_active / DELTA_CLAMP)
+
+    # S6: per-sample centering REMOVED
+    # (was: delta_active = delta_active - delta_active.mean(dim=1, keepdim=True))
+
+    # S2: fixed gate replaces learnable gate
+    # (was: DELTA_GATE_MAX = 0.2; gate = torch.sigmoid(self.raw_gate) * DELTA_GATE_MAX)
+    return delta_active * FIXED_GATE
+```
+
+**`forward` — unchanged** (still passes `base_logits_active` to `get_lowrank_delta`):
+
+```python
+def forward(self, x: torch.Tensor) -> torch.Tensor:
+    if x.ndim != 3:
+        raise ValueError(f"Expected input of shape (batch, n_models, n_labels), got {x.shape}")
+
+    w_eff = self.effective_w().unsqueeze(0)  # (1, M, L)
+    base_logits = (x * w_eff).sum(dim=1) + self.bias
+
+    if self.n_active == 0:
+        return base_logits
+
+    x_active = x.index_select(dim=2, index=self.active_idx)
+    base_logits_active = base_logits.index_select(dim=1, index=self.active_idx)
+
+    gated_delta_active = self.get_lowrank_delta(x_active, base_logits_active)
+
+    # Multiplicative application KEPT (S7 excluded)
+    out_active = base_logits_active * (1.0 + gated_delta_active)
+
+    out = base_logits.clone()
+    out.index_copy_(dim=1, index=self.active_idx, source=out_active)
+    return out
+
+def delta_l2(self) -> torch.Tensor:
+    return (self.w_delta**2).mean()  # KEPT
+```
+
+#### `_delta_stats` helper — unchanged
+
+The function signature and body remain identical to the original. It still
+receives `base_logits_active` from the model's `get_lowrank_delta` method.
+
+```python
+def _delta_stats(
+    model: ActiveLowRankEnsemble, loader: torch.utils.data.DataLoader, device: torch.device
+) -> tuple[float, float]:
+    sum_abs = 0.0
+    n_abs = 0
+    max_samples = 1_000_000
+    samples: list[torch.Tensor] = []
+
+    with torch.no_grad():
+        for batch in loader:
+            if isinstance(batch, (list, tuple)):
+                xb = batch[0]
+            else:
+                xb = batch
+            xb = xb.to(device, non_blocking=True)
+
+            x_active = xb.index_select(dim=2, index=model.active_idx)
+            w_eff = model.effective_w().unsqueeze(0)
+            base_logits = (xb * w_eff).sum(dim=1) + model.bias
+            base_logits_active = base_logits.index_select(dim=1, index=model.active_idx)
+
+            delta = model.get_lowrank_delta(x_active, base_logits_active)
+            a = delta.abs().detach().cpu().reshape(-1)
+
+            sum_abs += float(a.sum().item())
+            n_abs += int(a.numel())
+
+            if max_samples > 0:
+                remaining = max_samples - sum(int(s.numel()) for s in samples)
+                if remaining <= 0:
+                    max_samples = 0
+                else:
+                    if a.numel() <= remaining:
+                        samples.append(a)
+                    else:
+                        idx = torch.randperm(a.numel())[:remaining]
+                        samples.append(a.index_select(0, idx))
+
+    if n_abs == 0:
+        return 0.0, 0.0
+
+    mean_abs = sum_abs / float(n_abs)
+    if not samples:
+        return float(mean_abs), 0.0
+
+    v = torch.cat(samples, dim=0)
+    v, _ = torch.sort(v)
+    q_idx = min(int(round(0.95 * (v.numel() - 1))), v.numel() - 1)
+    p95_abs = float(v[q_idx].item())
+    return float(mean_abs), float(p95_abs)
+```
+
+#### Optimizer — adjusted (S2: remove `raw_gate` group)
+
+```python
+# Two-tiered LR KEPT (S5 single_lr was unsuccessful)
+optimizer = optim.AdamW(
+    [
+        {"params": [model.g_raw, model.w_delta, model.bias], "lr": BEST_LR, "weight_decay": BEST_WEIGHT_DECAY},
+        {"params": model.lowrank.parameters(), "lr": LOWRANK_LR, "weight_decay": LOWRANK_WEIGHT_DECAY},
+        # REMOVED: {"params": [model.raw_gate], ...} (S2 — gate is now a constant)
+    ],
+    eps=1e-8,
+)
+```
+
+#### Training loop — adjusted logging (S2: no `gate_val`)
+
+```python
+# In the epoch logging, replace gate_val with the constant:
+delta_mean_abs, delta_p95_abs = _delta_stats(model, train_eval_loader, DEVICE)
+
+# REMOVED: gate_val = torch.sigmoid(model.raw_gate).item()
+
+print(
+    f"Epoch {epoch:02d} | loss={float(last_loss or 0.0):.6f} | "
+    f"train_ndcg@1000(subset)={train_ndcg1000:.6f} train_ndcg@10={train_ndcg10:.6f} | "
+    f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
+    f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
+    f"test_f1@5={test_metrics['f1@5']:.6f} | "
+    f"gate={FIXED_GATE:.4f}(fixed) LowRank_delta_mean={delta_mean_abs:.6f} p95={delta_p95_abs:.6f} | "
+    f"total={epoch_dt:.3f}s"
+)
+```
+
+#### `main()` function — only `model_name` changes
+
+```python
+model_name = f"torch_per_label_softmax_global_active_lowrank_combined_v2({','.join(ensemble_keys)})"
+```
+
+**All other code (data loading, early stopping, scoreboard update, evaluation,
+preprocessing) remains identical to the original.**
+
+---
+
+### Diff summary vs. original
+
+Only **4 lines** in the model code change:
+
+1. **Remove** `self.raw_gate = nn.Parameter(...)` from `__init__`.
+2. **Remove** `delta_active = delta_active - delta_active.mean(dim=1, keepdim=True)` from `get_lowrank_delta`.
+3. **Replace** the gate computation (`gate = sigmoid(raw_gate) * 0.2`) with `return delta_active * FIXED_GATE`.
+4. **Remove** the `raw_gate` optimizer param group.
+
+Plus 2 constant changes:
+- **Add** `FIXED_GATE = 0.02`.
+- **Remove** `DELTA_GATE_MAX = 0.2` (not used anywhere else).
+
+### Parameter comparison (M=3, L_active ≈ 10000)
+
+| Component | Original | Combined v2 | Reduction |
+|-----------|----------|-------------|-----------|
+| `g_raw` | 3 | 3 | — |
+| `w_delta` | 3 × L | 3 × L | — |
+| `bias` | L | L | — |
+| `U` | L_active × 64 | L_active × 64 | — |
+| `V` | L_active × 64 | L_active × 64 | — |
+| `W` | 4 × 64 = 256 | 4 × 64 = 256 | — |
+| `raw_gate` | 1 | **removed** | ∞ |
+| **Total** | N + 1 | **N** | 1 param |
+
+### Hyperparameter comparison
+
+| Hyperparameter | Original | Combined v2 | Status |
+|----------------|----------|-------------|--------|
+| `BEST_LR` | 0.003 | 0.003 | unchanged |
+| `BEST_WEIGHT_DECAY` | 0.0 | 0.0 | unchanged |
+| `BEST_BATCH_SIZE` | 256 | 256 | unchanged |
+| `LAMBDA_DELTA_L2` | 1e-3 | 1e-3 | unchanged |
+| `LOWRANK_LR` | 1e-4 | 1e-4 | unchanged |
+| `LOWRANK_WEIGHT_DECAY` | 1e-2 | 1e-2 | unchanged |
+| `DEFAULT_RANK` | 64 | 64 | unchanged |
+| `DELTA_CLAMP` | 0.5 | 0.5 | unchanged |
+| `DELTA_GATE_MAX` | 0.2 | **removed** | replaced by `FIXED_GATE=0.02` |
+| `EPOCHS` | 20 | 20 | unchanged |
+| `PATIENCE` | 3 | 3 | unchanged |
+| `MIN_EPOCHS` | 2 | 2 | unchanged |
+
+**Total unique hyperparameters: 12** (vs. original's **13**).
+
+### Risks
+
+- **Minimal risk:** Both S6 and S2 were individually validated with negligible
+  or positive impact. Neither change reduces mixer capacity.
+- **Independence:** S6 modifies the post-processing of the mixer output (centering),
+  while S2 modifies the gating mechanism. These are structurally independent
+  operations in the forward pass pipeline: `lowrank → tanh_clamp → [centering] → [gate]`.
+  Removing centering and fixing the gate affect different stages and should not
+  interact negatively.
+- **Bounded delta:** Even without centering, the tanh clamp ([-0.5, 0.5]) combined
+  with the fixed gate (0.02) bounds the effective gated delta to [-0.01, 0.01].
+  This ensures stability.
