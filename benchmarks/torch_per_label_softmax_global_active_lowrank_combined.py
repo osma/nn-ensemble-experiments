@@ -358,7 +358,7 @@ def train_and_evaluate(
             f"total={epoch_dt:.3f}s"
         )
 
-        current = train_ndcg1000
+        current = train_ndcg10
         if current > best_metric:
             best_metric = current
             best_epoch = epoch
