@@ -78,34 +78,35 @@ def _csr_avg_nnz_per_row(x: csr_matrix) -> float:
     return float(np.mean(np.diff(x.indptr)))
 
 
-class LowRankActiveMixer(nn.Module):
+class ActiveMLPMixer(nn.Module):
     """
-    Symmetric low-rank mixer: feats (B, C, L_active) -> delta (B, L_active).
+    MLP over flattened (M x L_active) inputs to predict label adjustments.
     """
-    def __init__(self, n_channels: int, n_active: int, rank: int):
+    def __init__(self, n_models: int, n_active: int, hidden_dim: int, dropout_rate: float):
         super().__init__()
-        self.n_channels = n_channels
+        self.n_models = n_models
         self.n_active = n_active
-        self.rank = rank
+        self.hidden_dim = hidden_dim
 
-        self.U = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
-        self.V = nn.Parameter(0.01 * torch.randn(self.rank, self.n_active))
-        self.W = nn.Parameter(0.1 * torch.randn(self.n_channels, self.rank))
+        self.flatten = nn.Flatten()
+        self.dropout1 = nn.Dropout(dropout_rate)
+        self.hidden = nn.Linear(self.n_models * self.n_active, hidden_dim)
+        self.dropout2 = nn.Dropout(dropout_rate)
+        self.delta_layer = nn.Linear(hidden_dim, self.n_active)
 
-    def forward(self, feats: torch.Tensor) -> torch.Tensor:
-        B = feats.shape[0]
+        # Zero-initialize the final layer so it starts as a true residual block
+        nn.init.zeros_(self.delta_layer.weight)
+        nn.init.zeros_(self.delta_layer.bias)
+
+    def forward(self, x_active: torch.Tensor) -> torch.Tensor:
         if self.n_active == 0:
-            return feats.new_zeros((B, 0))
+            return x_active.new_zeros((x_active.shape[0], 0))
 
-        # (B*C, L_active) @ (L_active, rank) -> (B*C, rank)
-        x2 = feats.reshape(B * self.n_channels, self.n_active)
-        Z = x2 @ self.U
-        Z = Z.reshape(B, self.n_channels, self.rank)
-
-        # Mix channels
-        h = torch.sum(Z * self.W.unsqueeze(0), dim=1)  # (B, rank)
-
-        delta = h @ self.V
+        x = self.flatten(x_active)
+        x = self.dropout1(x)
+        x = F.relu(self.hidden(x))
+        x = self.dropout2(x)
+        delta = self.delta_layer(x)
         return delta
 
 
@@ -145,10 +146,11 @@ class ActiveLowRankEnsemble(nn.Module):
         self.w_delta = nn.Parameter(torch.zeros(self.n_models, self.n_labels))
         self.bias = nn.Parameter(torch.zeros(self.n_labels))
 
-        self.lowrank = LowRankActiveMixer(
-            n_channels=self.n_models,  # CHANGED: was self.n_models + 1 (S4)
+        self.lowrank = ActiveMLPMixer(
+            n_models=self.n_models,
             n_active=self.n_active,
-            rank=rank,
+            hidden_dim=64,
+            dropout_rate=0.5,
         )
         self.use_lowrank = True
 
@@ -159,13 +161,7 @@ class ActiveLowRankEnsemble(nn.Module):
         return self.global_w()[:, None] + self.w_delta
 
     def get_lowrank_delta(self, x_active: torch.Tensor) -> torch.Tensor:
-        # S4: use raw model scores only (no base_logits_active argument)
-        feats = x_active  # (B, M, L_active)
-
-        delta_active = self.lowrank(feats)
-
-        DELTA_CLAMP = 0.5
-        delta_active = DELTA_CLAMP * torch.tanh(delta_active / DELTA_CLAMP)
+        delta_active = self.lowrank(x_active)
 
         # Restore per-sample centering to prevent pushing all outputs up or down
         delta_active = delta_active - delta_active.mean(dim=1, keepdim=True)
@@ -184,13 +180,10 @@ class ActiveLowRankEnsemble(nn.Module):
             return base_logits
 
         x_active = x.index_select(dim=2, index=self.active_idx)
-        # S4: base_logits_active no longer needed
-
-        gated_delta_active = self.get_lowrank_delta(x_active)  # S4: no base_logits_active
-
-        # Multiplicative application KEPT
+        gated_delta_active = self.get_lowrank_delta(x_active)
+        
         base_logits_active = base_logits.index_select(dim=1, index=self.active_idx)
-        out_active = base_logits_active * (1.0 + gated_delta_active)
+        out_active = base_logits_active + gated_delta_active
 
         out = base_logits.clone()
         out.index_copy_(dim=1, index=self.active_idx, source=out_active)
@@ -217,7 +210,6 @@ def _delta_stats(
             xb = xb.to(device, non_blocking=True)
 
             x_active = xb.index_select(dim=2, index=model.active_idx)
-            # S4: no base_logits_active needed
             delta = model.get_lowrank_delta(x_active)
             a = delta.abs().detach().cpu().reshape(-1)
 
@@ -340,22 +332,22 @@ def train_and_evaluate(
             mean_gnorm_lr = np.mean(grad_norms_lr) if grad_norms_lr else 0.0
 
             with torch.no_grad():
-                u_norm = model.lowrank.U.norm().item()
-                v_norm = model.lowrank.V.norm().item()
-                w_norm = model.lowrank.W.norm().item()
+                mlp_w1_norm = model.lowrank.hidden.weight.norm().item()
+                mlp_w2_norm = model.lowrank.delta_layer.weight.norm().item()
                 w_delta_norm = model.w_delta.norm().item()
 
             epoch_dt = time.perf_counter() - epoch_t0
-
             print(
-                f"S{stage_num}E{epoch:02d} | loss={float(last_loss or 0.0):.6f} | "
-                f"train_ndcg@1000(subset)={train_ndcg1000:.6f} train_ndcg@10={train_ndcg10:.6f} | "
+                f"S{stage_num}E{epoch:02d} | "
+                f"loss={float(last_loss or 0.0):.6f} | "
+                f"train_ndcg@1000(subset)={train_ndcg1000:.6f} "
+                f"train_ndcg@10={train_ndcg10:.6f} | "
                 f"test_ndcg@10={test_metrics['ndcg@10']:.6f} "
                 f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
                 f"test_f1@5={test_metrics['f1@5']:.6f} | "
                 f"gate={FIXED_GATE:.4f}(fixed) LowRank_delta_mean={delta_mean_abs:.6f} p95={delta_p95_abs:.6f} | "
                 f"gnorm={mean_gnorm:.4f} gnorm_lr={mean_gnorm_lr:.4f} | "
-                f"U_norm={u_norm:.2f} V_norm={v_norm:.2f} W_norm={w_norm:.2f} w_delta_norm={w_delta_norm:.2f} | "
+                f"mlp_w1_norm={mlp_w1_norm:.2f} mlp_w2_norm={mlp_w2_norm:.2f} w_delta_norm={w_delta_norm:.2f} | "
                 f"total={epoch_dt:.3f}s"
             )
 
@@ -411,9 +403,8 @@ def train_and_evaluate(
     model.bias.requires_grad_(False)
     model.lowrank.requires_grad_(True)
 
-    optimizer_s2 = optim.AdamW(
+    optimizer_s2 = optim.SGD(
         [{"params": model.lowrank.parameters(), "lr": LOWRANK_LR, "weight_decay": LOWRANK_WEIGHT_DECAY}],
-        eps=1e-8,
     )
     res2 = _run_stage(2, optimizer_s2, EPOCHS)
 
