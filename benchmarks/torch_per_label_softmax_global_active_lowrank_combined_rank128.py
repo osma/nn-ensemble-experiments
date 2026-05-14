@@ -55,7 +55,7 @@ LAMBDA_DELTA_L2 = 1e-3
 LOWRANK_LR = 1e-4
 LOWRANK_WEIGHT_DECAY = 1e-2
 
-DEFAULT_RANK = 16  # S3: Reduced from 64
+DEFAULT_RANK = 128
 FIXED_GATE = 1.0  # S2: Replaces learnable raw_gate
 
 
@@ -416,7 +416,7 @@ def main() -> None:
     train_seed = int(args.seed)
 
     ensemble_keys = ensemble3_keys(dataset)
-    base_name = f"torch_per_label_softmax_global_active_lowrank_combined({','.join(ensemble_keys)})"
+    base_name = f"torch_per_label_softmax_global_active_lowrank_combined_rank128({','.join(ensemble_keys)})"
     model_name = base_name if train_seed == DEFAULT_TRAIN_SEED else f"{base_name}/seed={train_seed}"
     scoreboard_path = Path("SCOREBOARD.md")
 
