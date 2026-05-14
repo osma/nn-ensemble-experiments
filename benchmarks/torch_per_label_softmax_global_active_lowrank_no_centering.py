@@ -42,7 +42,7 @@ MIN_EPOCHS = 2
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
 EVAL_BATCH_SIZE = 512
-TRAIN_SEED = 0
+DEFAULT_TRAIN_SEED = 0
 
 BEST_LR = 0.003
 BEST_WEIGHT_DECAY = 0.0
@@ -259,9 +259,15 @@ def train_and_evaluate(
     full_train_loader: torch.utils.data.DataLoader,
     y_train_true: csr_matrix,
     active_idx: torch.Tensor,
+    train_seed: int = DEFAULT_TRAIN_SEED,
 ) -> dict[str, float | int | dict[str, float]]:
     n_models = len(ensemble_keys)
     n_labels = y_train_true.shape[1]
+
+    # Make each run deterministic-ish (init + dataloader shuffle)
+    torch.manual_seed(train_seed)
+    if DEVICE.type == "cuda":
+        torch.cuda.manual_seed_all(train_seed)
 
     cfg = get_dataset_config(dataset)
     init_global: torch.Tensor | None = None
@@ -399,11 +405,19 @@ def main() -> None:
         choices=["yso-fi", "yso-en", "koko"],
         help="Dataset to benchmark",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_TRAIN_SEED,
+        help="Random seed for training (init + shuffle). Default: %(default)s",
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
+    train_seed = int(args.seed)
 
     ensemble_keys = ensemble3_keys(dataset)
-    model_name = f"torch_per_label_softmax_global_active_lowrank_no_centering({','.join(ensemble_keys)})"
+    base_name = f"torch_per_label_softmax_global_active_lowrank_no_centering({','.join(ensemble_keys)})"
+    model_name = base_name if train_seed == DEFAULT_TRAIN_SEED else f"{base_name}/seed={train_seed}"
     scoreboard_path = Path("SCOREBOARD.md")
 
     print("Using device:", DEVICE)
@@ -467,6 +481,7 @@ def main() -> None:
         full_train_loader=full_train_loader,
         y_train_true=y_train_true,
         active_idx=active_idx,
+        train_seed=train_seed,
     )
 
     best_epoch = int(result["best_epoch"])

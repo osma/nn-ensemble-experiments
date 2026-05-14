@@ -126,7 +126,7 @@ BEST_WEIGHT_DECAY = 0.0
 BEST_BATCH_SIZE = 256
 
 # Reproducibility for training shuffles / init
-TRAIN_SEED = 0
+DEFAULT_TRAIN_SEED = 0
 
 # Explicit L2 penalty on w_delta
 LAMBDA_DELTA_L2 = 1e-3
@@ -149,6 +149,7 @@ def train_and_evaluate(
     y_test_true: csr_matrix,
     full_train_loader: torch.utils.data.DataLoader,
     y_train_true: csr_matrix,
+    train_seed: int = DEFAULT_TRAIN_SEED,
 ) -> dict[str, object]:
     """
     Train a model with given hyperparameters and return the best snapshot
@@ -158,9 +159,9 @@ def train_and_evaluate(
         raise ValueError("batch_size must be positive")
 
     # Make each run deterministic-ish (init + dataloader shuffle)
-    torch.manual_seed(TRAIN_SEED)
+    torch.manual_seed(train_seed)
     if DEVICE.type == "cuda":
-        torch.cuda.manual_seed_all(TRAIN_SEED)
+        torch.cuda.manual_seed_all(train_seed)
 
     n_models = len(ensemble_keys)
     n_labels = y_train_true.shape[1]
@@ -294,11 +295,19 @@ def main() -> None:
         choices=["yso-fi", "yso-en", "koko"],
         help="Dataset to benchmark",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_TRAIN_SEED,
+        help="Random seed for training (init + shuffle). Default: %(default)s",
+    )
     args = parser.parse_args()
     dataset = str(args.dataset)
+    train_seed = int(args.seed)
 
     ensemble_keys = ensemble3_keys(dataset)
-    model_name = f"torch_per_label_softmax_global({','.join(ensemble_keys)})"
+    base_name = f"torch_per_label_softmax_global({','.join(ensemble_keys)})"
+    model_name = base_name if train_seed == DEFAULT_TRAIN_SEED else f"{base_name}/seed={train_seed}"
 
     scoreboard_path = Path("SCOREBOARD.md")
 
@@ -352,6 +361,7 @@ def main() -> None:
         test_loader=test_loader,
         y_test_true=y_test_true,
         full_train_loader=full_train_loader,
+        train_seed=train_seed,
     )
 
     best_epoch = int(result["best_epoch"])

@@ -18,6 +18,7 @@ set -eu
 #   ./regenerate_scoreboard.sh --clean        # rebuild from scratch
 #   ./regenerate_scoreboard.sh --dataset yso-fi
 #   ./regenerate_scoreboard.sh --models baseline,mean_weighted,torch_per_label
+#   ./regenerate_scoreboard.sh --seed 42      # run with a specific random seed
 #
 # Notes:
 # - "models" are benchmark modules under `benchmarks.*` (without the prefix).
@@ -27,6 +28,7 @@ CLEAN=0
 DATASETS="yso-fi yso-en koko"
 MODELS="baseline mean mean_weighted torch_lowrank_residual_epsclamp torch_lowrank_residual_mix_temp torch_mean torch_mean_residual torch_mean_residual_lowrank_mix torch_nn_simple torch_nn_split torch_nn_split_per_label torch_per_label torch_per_label_elastic_anchor torch_per_label_l1_delta torch_per_label_residual_lowrank_mix_active"
 NO_CACHE=0
+SEED=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -46,6 +48,10 @@ while [ "$#" -gt 0 ]; do
       MODELS=$(printf "%s" "$2" | tr ',' ' ')
       shift 2
       ;;
+    --seed)
+      SEED="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       exit 2
@@ -56,9 +62,16 @@ done
 CACHE_DIR=".cache/benchmarks"
 CACHE_VER="v3"
 
+# When a non-default seed is specified, disable caching automatically since
+# the same script+data hash would collide with the default-seed cached results.
+if [ -n "$SEED" ]; then
+  NO_CACHE=1
+fi
+
 echo "Updating SCOREBOARD.md (incremental=$((1-CLEAN)), no_cache=$NO_CACHE)..."
 echo "Datasets: $DATASETS"
 echo "Models:   $MODELS"
+echo "Seed:     ${SEED:-default}"
 echo "Cache:    $CACHE_DIR ($CACHE_VER)"
 
 mkdir -p "$CACHE_DIR"
@@ -207,6 +220,10 @@ for m in $MODELS; do
     if [ "$m" != "baseline" ]; then
       # Most modules format the model name as: "<module>(<ensemble_keys...>)"
       model_name="$(uv run python -c "from benchmarks.datasets import ensemble3_keys; e=ensemble3_keys('$ds'); print('$m(' + ','.join(e) + ')')")"
+      # When using a non-default seed, the model name gets a /seed=N suffix
+      if [ -n "$SEED" ] && [ "$SEED" != "0" ]; then
+        model_name="${model_name}/seed=${SEED}"
+      fi
     fi
 
     # torch_mean_residual_mlp defaults to prob_epsclamp; its scoreboard row key differs
@@ -259,7 +276,11 @@ for m in $MODELS; do
         exit 1
       }
     else
-      uv run python -m "benchmarks.$m" --dataset "$ds" || {
+      seed_arg=""
+      if [ -n "$SEED" ]; then
+        seed_arg="--seed $SEED"
+      fi
+      uv run python -m "benchmarks.$m" --dataset "$ds" $seed_arg || {
         echo "Benchmark failed: benchmarks.$m (dataset=$ds)" >&2
         exit 1
       }

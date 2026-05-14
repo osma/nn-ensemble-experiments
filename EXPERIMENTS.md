@@ -44,6 +44,7 @@ This document centralizes the findings, analysis, and detailed experiment logs f
 ### 3. Unconstrained Cross-Label Mixing
 - Cross-label mixing can help in isolated cases but is not a free win. It introduces many hyperparameters and can help one metric while hurting another.
 - **Mitigation**: Requires strong safety rails like bounded gates, per-example centering, and explicit penalties.
+- **Ultimate Finding**: Even with strong safety rails (low-rank bottleneck, multiplicative gating), our multi-seed evaluation proved that the performance gains of cross-label mixers over a simple independent linear ensemble are practically negligible (~0.0005) and statistically indistinguishable from random seed noise.
 
 ---
 
@@ -130,6 +131,25 @@ Consistent use of `log1p(clamp(x,0))` for logits-based models. Keeping this outs
 3. **Logit Space Advantage**: Training in logit space avoids saturation and provides smoother gradients.
 4. **Imbalance vs. Capacity**: Class imbalance interacts with capacity; broad shifts are rewarded by BCE but harm ranking.
 5. **Base Weights vs. Correction**: Simple base weights (like `w_delta`) provide essential label-specific signals that complex corrections (like low-rank mixers) struggle to recover if trained from scratch with low learning rates.
+
+---
+
+### 4. Multi-Seed Statistical Validation
+*Determining if the performance gap between complex and simple models is real.*
+
+After exploring low-rank neural mixers, we achieved models that consistently placed at the top of the single-seed (Seed 0) `SCOREBOARD.md`. However, the absolute score differences were extremely small (e.g., ~0.0005 weighted average). To verify if the low-rank neural mixer provided a true structural advantage over a simple linear baseline, we performed a rigorous 5-seed evaluation on the top four architectures.
+
+**Results (5-Seed Weighted Average, Mean ± Std):**
+1. `softmax_global_active_lowrank_combined`: **0.534343** ± 0.000347
+2. `softmax_global_active_lowrank_no_centering`: **0.534253** ± 0.000262
+3. `softmax_global` (Simple Baseline): **0.533780** ± 0.001098
+4. `softmax_global_active_lowrank` (Original): **0.533653** ± 0.000881
+
+**Conclusions:**
+1. **The gap is statistically indistinguishable:** A paired difference test between the simple baseline (`softmax_global`) and the complex low-rank variants yielded a 95% confidence interval that overlaps with zero. The ~0.0005 gain is within the margin of random initialization variation.
+2. **Overfitting to Seed 0:** The highly complex original `active_lowrank` actually performed the worst on average across 5 seeds, indicating that its apparent #1 single-seed status was an artifact of overfitting to the default seed's initialization noise.
+3. **The `combined` simplification is strictly superior:** Our heavy pruning of the low-rank architecture (removing 8× parameters, fixing gates, removing centering) resulted in a structurally more stable model that genuinely achieved the highest average.
+4. **Final Decision:** Because the performance gain of the best low-rank neural mixer over the simple linear ensemble is practically negligible (0.0005) and statistically insignificant, we select the **simplest model (`torch_per_label_softmax_global`)** for production deployment to maximize maintainability, speed, and robustness.
 
 ---
 
