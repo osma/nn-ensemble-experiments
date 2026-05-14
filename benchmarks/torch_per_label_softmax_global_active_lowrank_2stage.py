@@ -4,7 +4,6 @@
 # Combines five successful/neutral simplifications:
 # 1. S6: Remove per-sample centering.
 # 2. S2: Fix gate at constant 0.02 (remove learnable raw_gate).
-# 3. S8: Symmetric factorization (tie U=V).
 # 4. S4: Remove base_logits channel from mixer features.
 # 5. S3: Reduce rank 64 -> 16.
 #
@@ -40,7 +39,7 @@ DEVICE = get_device()
 
 EPOCHS = 30
 K_VALUES = (10, 1000)
-PATIENCE = 10
+PATIENCE = 3
 MIN_EPOCHS = 2
 EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
@@ -82,7 +81,6 @@ def _csr_avg_nnz_per_row(x: csr_matrix) -> float:
 class LowRankActiveMixer(nn.Module):
     """
     Symmetric low-rank mixer: feats (B, C, L_active) -> delta (B, L_active).
-    Uses U for both label->latent and latent->label projections (S8).
     """
     def __init__(self, n_channels: int, n_active: int, rank: int):
         super().__init__()
@@ -91,6 +89,7 @@ class LowRankActiveMixer(nn.Module):
         self.rank = rank
 
         self.U = nn.Parameter(0.01 * torch.randn(self.n_active, self.rank))
+        self.V = nn.Parameter(0.01 * torch.randn(self.rank, self.n_active))
         self.W = nn.Parameter(0.1 * torch.randn(self.n_channels, self.rank))
 
     def forward(self, feats: torch.Tensor) -> torch.Tensor:
@@ -106,7 +105,7 @@ class LowRankActiveMixer(nn.Module):
         # Mix channels
         h = torch.sum(Z * self.W.unsqueeze(0), dim=1)  # (B, rank)
 
-        delta = h @ self.U.t()  # (B, L_active)
+        delta = h @ self.V
         return delta
 
 
@@ -342,7 +341,7 @@ def train_and_evaluate(
 
             with torch.no_grad():
                 u_norm = model.lowrank.U.norm().item()
-                v_norm = model.lowrank.U.norm().item() # v is tied to u
+                v_norm = model.lowrank.V.norm().item()
                 w_norm = model.lowrank.W.norm().item()
                 w_delta_norm = model.w_delta.norm().item()
 
@@ -356,7 +355,7 @@ def train_and_evaluate(
                 f"test_f1@5={test_metrics['f1@5']:.6f} | "
                 f"gate={FIXED_GATE:.4f}(fixed) LowRank_delta_mean={delta_mean_abs:.6f} p95={delta_p95_abs:.6f} | "
                 f"gnorm={mean_gnorm:.4f} gnorm_lr={mean_gnorm_lr:.4f} | "
-                f"U_norm={u_norm:.2f} W_norm={w_norm:.2f} w_delta_norm={w_delta_norm:.2f} | "
+                f"U_norm={u_norm:.2f} V_norm={v_norm:.2f} W_norm={w_norm:.2f} w_delta_norm={w_delta_norm:.2f} | "
                 f"total={epoch_dt:.3f}s"
             )
 
