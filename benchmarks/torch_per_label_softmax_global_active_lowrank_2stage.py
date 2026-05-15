@@ -52,6 +52,8 @@ BEST_BATCH_SIZE = 256
 LAMBDA_DELTA_L2 = 1e-3
 
 LOWRANK_LR = 1e-3
+LOWRANK_DIM = 64
+LOWRANK_DROPOUT = 0.2
 LOWRANK_WEIGHT_DECAY = 1e-2
 
 DEFAULT_RANK = 16  # S3: Reduced from 64
@@ -149,8 +151,8 @@ class ActiveLowRankEnsemble(nn.Module):
         self.lowrank = ActiveMLPMixer(
             n_models=self.n_models,
             n_active=self.n_active,
-            hidden_dim=64,
-            dropout_rate=0.5,
+            hidden_dim=LOWRANK_DIM,
+            dropout_rate=LOWRANK_DROPOUT,
         )
         self.use_lowrank = True
 
@@ -164,7 +166,7 @@ class ActiveLowRankEnsemble(nn.Module):
         delta_active = self.lowrank(x_active)
 
         # Restore per-sample centering to prevent pushing all outputs up or down
-        delta_active = delta_active - delta_active.mean(dim=1, keepdim=True)
+#        delta_active = delta_active - delta_active.mean(dim=1, keepdim=True)
 
         # S2: fixed gate replaces learnable gate
         return delta_active * FIXED_GATE
@@ -182,12 +184,13 @@ class ActiveLowRankEnsemble(nn.Module):
         x_active = x.index_select(dim=2, index=self.active_idx)
         gated_delta_active = self.get_lowrank_delta(x_active)
         
-        base_logits_active = base_logits.index_select(dim=1, index=self.active_idx)
-        out_active = base_logits_active + gated_delta_active
+        base_pred = torch.sigmoid(base_logits)
+        base_pred_active = base_pred.index_select(dim=1, index=self.active_idx)
+        out_active = base_pred_active + gated_delta_active
 
-        out = base_logits.clone()
+        out = base_pred.clone()
         out.index_copy_(dim=1, index=self.active_idx, source=out_active)
-        return out
+        return torch.clamp(out, min=0.0, max=1.0)
 
     def delta_l2(self) -> torch.Tensor:
         return (self.w_delta**2).mean()
@@ -276,9 +279,7 @@ def train_and_evaluate(
         init_global=init_global,
     ).to(DEVICE)
 
-    criterion = nn.BCEWithLogitsLoss()
-
-    def _run_stage(stage_num: int, optimizer: optim.Optimizer, max_epochs: int):
+    def _run_stage(stage_num: int, criterion, optimizer: optim.Optimizer, max_epochs: int):
         best_metric = float("-inf")
         best_epoch: int | None = None
         best_state: dict[str, torch.Tensor] | None = None
@@ -346,8 +347,8 @@ def train_and_evaluate(
                 f"test_ndcg@1000={test_metrics['ndcg@1000']:.6f} "
                 f"test_f1@5={test_metrics['f1@5']:.6f} | "
                 f"gate={FIXED_GATE:.4f}(fixed) LowRank_delta_mean={delta_mean_abs:.6f} p95={delta_p95_abs:.6f} | "
-                f"gnorm={mean_gnorm:.4f} gnorm_lr={mean_gnorm_lr:.4f} | "
-                f"mlp_w1_norm={mlp_w1_norm:.2f} mlp_w2_norm={mlp_w2_norm:.2f} w_delta_norm={w_delta_norm:.2f} | "
+                f"gnorm={mean_gnorm:.4f} gnorm_lr={mean_gnorm_lr:.6f} | "
+                f"mlp_w1_norm={mlp_w1_norm:.2f} mlp_w2_norm={mlp_w2_norm:.5f} w_delta_norm={w_delta_norm:.2f} | "
                 f"total={epoch_dt:.3f}s"
             )
 
@@ -390,11 +391,12 @@ def train_and_evaluate(
     model.bias.requires_grad_(True)
     model.lowrank.requires_grad_(False)
 
+    criterion_s1 = nn.BCEWithLogitsLoss()
     optimizer_s1 = optim.AdamW(
         [{"params": [model.g_raw, model.w_delta, model.bias], "lr": BEST_LR, "weight_decay": BEST_WEIGHT_DECAY}],
         eps=1e-8,
     )
-    res1 = _run_stage(1, optimizer_s1, EPOCHS)
+    res1 = _run_stage(1, criterion_s1, optimizer_s1, EPOCHS)
 
     print("\n--- STAGE 2: Train lowrank parameters only ---")
     model.use_lowrank = True
@@ -403,10 +405,11 @@ def train_and_evaluate(
     model.bias.requires_grad_(False)
     model.lowrank.requires_grad_(True)
 
+    criterion_s2 = nn.BCELoss()
     optimizer_s2 = optim.SGD(
         [{"params": model.lowrank.parameters(), "lr": LOWRANK_LR, "weight_decay": LOWRANK_WEIGHT_DECAY}],
     )
-    res2 = _run_stage(2, optimizer_s2, EPOCHS)
+    res2 = _run_stage(2, criterion_s2, optimizer_s2, EPOCHS)
 
     res_final = res2
     res_final["best_epoch"] = res1["best_epoch"] + res2["best_epoch"]
