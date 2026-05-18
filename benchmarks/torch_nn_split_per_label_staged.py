@@ -53,10 +53,10 @@ from benchmarks.preprocessing import SparseCSRDataset, sqrt_transform
 DEVICE = get_device()
 
 # Training defaults
-EPOCHS = 12
+EPOCHS = 30
 K_VALUES = (10, 1000)
-PATIENCE = 2
-MIN_EPOCHS = 2
+PATIENCE = 5
+MIN_EPOCHS = 4
 
 TRAIN_BATCH_SIZE = 256
 EVAL_BATCH_SIZE = 512
@@ -65,6 +65,7 @@ EARLY_STOP_EVAL_ROWS = 512
 EARLY_STOP_SEED = 1337
 
 LR = 1e-3
+LR_STAGE2 = 5e-4  # Moderate LR for Stage 2 MLP fine-tuning
 WEIGHT_DECAY = 0.01
 TRAIN_SEED = 0
 
@@ -478,7 +479,7 @@ def main() -> None:
 
     cfg = get_dataset_config(dataset)
     e3 = ensemble3_keys(dataset)
-    model_name = f"torch_nn_split_per_label_staged({','.join(e3)})"
+    model_base = "torch_nn_split_per_label_staged"
     scoreboard_path = Path("SCOREBOARD.md")
 
     print("Using device:", DEVICE)
@@ -614,10 +615,10 @@ def main() -> None:
     # Load best state from stage 1
     model.load_state_dict(best_state_s1)
 
-    # Reset optimizer to include all parameters
+    # Reset optimizer to include all parameters with lower LR for Stage 2
     optimizer = optim.AdamW(
         model.parameters(),
-        lr=LR,
+        lr=LR_STAGE2,
         weight_decay=WEIGHT_DECAY,
         eps=1e-8,
     )
@@ -654,10 +655,32 @@ def main() -> None:
     # Use stage 2 best model for final results
     model.load_state_dict(best_state_s2)
 
-    # Save to scoreboard
+    # Save Stage 1 results to scoreboard with _s1 suffix (before parentheses)
+    model_s1 = f"{model_base}_s1({','.join(e3)})"
     update_markdown_scoreboard(
         path=scoreboard_path,
-        model=model_name,
+        model=model_s1,
+        dataset=dataset,
+        split="train",
+        metrics=best_train_s1,
+        n_samples=best_n_used_train_s1,
+        epoch=best_epoch_s1,
+    )
+    update_markdown_scoreboard(
+        path=scoreboard_path,
+        model=model_s1,
+        dataset=dataset,
+        split="test",
+        metrics=best_test_s1,
+        n_samples=best_n_used_test_s1,
+        epoch=best_epoch_s1,
+    )
+
+    # Save Stage 2 results to scoreboard with _s2 suffix (before parentheses)
+    model_s2 = f"{model_base}_s2({','.join(e3)})"
+    update_markdown_scoreboard(
+        path=scoreboard_path,
+        model=model_s2,
         dataset=dataset,
         split="train",
         metrics=best_train_s2,
@@ -666,7 +689,7 @@ def main() -> None:
     )
     update_markdown_scoreboard(
         path=scoreboard_path,
-        model=model_name,
+        model=model_s2,
         dataset=dataset,
         split="test",
         metrics=best_test_s2,
